@@ -1,8 +1,14 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.app.DownloadManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -84,6 +90,9 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
     private val _activeBackend = MutableStateFlow(GpuAccelerationBackend.VULKAN)
     val activeBackend: StateFlow<GpuAccelerationBackend> = _activeBackend.asStateFlow()
 
+    private val downloadManager = application.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+    private var downloadId: Long = -1
+
     fun setAccelerationBackend(backend: GpuAccelerationBackend) {
         _activeBackend.value = backend
     }
@@ -91,123 +100,76 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
     init {
         loadModelList()
         loadSavedSketches()
+        registerDownloadReceiver()
+    }
+
+    private fun registerDownloadReceiver() {
+        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                val id = intent?.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
+                if (id == downloadId) {
+                    loadModelList()
+                }
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getApplication<Application>().registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            getApplication<Application>().registerReceiver(receiver, filter)
+        }
     }
 
     private fun loadModelList() {
         val models = listOf(
             LocalModelFile(
                 id = "gemma-2b-it",
-                name = "Gemma 2B IT (Lightweight LLM)",
+                name = "Gemma 2B IT (Real LLM)",
                 type = LocalModelFile.ModelType.LLM,
-                sizeBytes = 1430000000L, // 1.43 GB
+                sizeBytes = 1430000000L,
                 isDownloaded = llmEngine.isModelReady(),
-                downloadUrl = "https://huggingface.co/google/gemma-2b-it",
+                downloadUrl = "https://huggingface.co/google/gemma-2b-it-cpu-int4.bin/resolve/main/gemma-2b-it-cpu-int4.bin",
                 localFileName = "gemma-2b-it-cpu-int4.bin",
-                description = "Google's ultra-efficient 2B parameter model optimized for local Android CPU devices."
+                description = "Mesin AI asli Google Gemma 2B yang berjalan 100% offline menggunakan MediaPipe."
             ),
             LocalModelFile(
                 id = "llama-3.2-1b-it",
                 name = "Meta Llama 3.2 1B Instruct",
                 type = LocalModelFile.ModelType.LLM,
-                sizeBytes = 1250000000L, // 1.25 GB
-                isDownloaded = false,
-                downloadUrl = "https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct",
+                sizeBytes = 1250000000L,
+                isDownloaded = isFileExists("llama-3.2-1b-it-q4.bin"),
+                downloadUrl = "https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct/resolve/main/llama-3.2-1b-it-q4.bin",
                 localFileName = "llama-3.2-1b-it-q4.bin",
-                description = "Generasi baru LLM andalan Meta yang dirancang khusus untuk berjalan super-ringan pada Android CPU berdaya mikro."
+                description = "Generasi baru LLM andalan Meta yang dirancang khusus untuk berjalan super-ringan."
             ),
             LocalModelFile(
                 id = "qwen-2.5-1.5b-it",
                 name = "Qwen 2.5 1.5B Instruct (Indonesian)",
                 type = LocalModelFile.ModelType.LLM,
-                sizeBytes = 1620000000L, // 1.62 GB
-                isDownloaded = false,
-                downloadUrl = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct",
+                sizeBytes = 1620000000L,
+                isDownloaded = isFileExists("qwen-2.5-1.5b-it-q4.bin"),
+                downloadUrl = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct/resolve/main/qwen-2.5-1.5b-it-q4.bin",
                 localFileName = "qwen-2.5-1.5b-it-q4.bin",
-                description = "Sangat fasih dalam percakapan Bahasa Indonesia, penalaran problem-solving koding, dan rumus matematika offline."
-            ),
-            LocalModelFile(
-                id = "phi-3.5-mini-it",
-                name = "Microsoft Phi-3.5 Mini Instruct",
-                type = LocalModelFile.ModelType.LLM,
-                sizeBytes = 2200000000L, // 2.20 GB
-                isDownloaded = false,
-                downloadUrl = "https://huggingface.co/microsoft/Phi-3.5-mini-instruct",
-                localFileName = "phi-3.5-mini-it-q4.bin",
-                description = "Model super-efisien buatan Microsoft dengan akurasi penalaran tingkat lanjut (Advanced Reasoning) setara model besar."
+                description = "Sangat fasih dalam percakapan Bahasa Indonesia secara offline."
             ),
             LocalModelFile(
                 id = "bge-small-en",
                 name = "BGE Small Vector Embeddings",
                 type = LocalModelFile.ModelType.EMBEDDING,
-                sizeBytes = 120000000L, // 120 MB
-                isDownloaded = true, // Embedded initially
-                downloadUrl = "https://huggingface.co/BAAI/bge-small-en-v1.5",
-                localFileName = "bge-small-en-v1.5.onnx",
-                description = "Lightweight dense vector embedder mapping textbook sentences to 384 dimensions."
-            ),
-            LocalModelFile(
-                id = "mediapipe-vision",
-                name = "MediaPipe Multi-Vision Tasks Model",
-                type = LocalModelFile.ModelType.VISION,
-                sizeBytes = 450000000L, // 450 MB
+                sizeBytes = 120000000L,
                 isDownloaded = true,
-                downloadUrl = "https://developers.google.com/mediapipe",
-                localFileName = "mobile_vision_tasks.task",
-                description = "Includes MobileNet-v3 image classifier and text OCR scanner for material diagrams."
-            ),
-            LocalModelFile(
-                id = "moondream2-tiny",
-                name = "Moondream2 Multimodal (Tiny Vision)",
-                type = LocalModelFile.ModelType.VISION,
-                sizeBytes = 860000000L, // 860 MB
-                isDownloaded = false,
-                downloadUrl = "https://huggingface.co/vikhyat/moondream2",
-                localFileName = "moondream2-q4.bin",
-                description = "Model visual-language compact berukuran kecil (1.6B parameter) yang tangguh untuk menganalisa visual chat & OCR kompleks."
-            ),
-            LocalModelFile(
-                id = "stable-diffusion-int4",
-                name = "MLC Mobile Stable Diffusion (Creative)",
-                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
-                sizeBytes = 2100000000L, // 2.1 GB
-                isDownloaded = false,
-                downloadUrl = "https://mlc.ai",
-                localFileName = "stable-diffusion-v1-5-int4.bin",
-                description = "Highly quantized text-to-image generator generating 512x512 science doodles."
-            ),
-            LocalModelFile(
-                id = "sdxl-turbo-mobile-lcm",
-                name = "SDXL Turbo Mobile (1-Step LCM)",
-                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
-                sizeBytes = 1420000000L, // 1.42 GB
-                isDownloaded = false,
-                downloadUrl = "https://huggingface.co/stabilityai/sdxl-turbo",
-                localFileName = "sdxl_turbo_lcm_q4.bin",
-                description = "Ultra-fast Realtime image synthesis that runs in just 1 single inference step on mobile."
-            ),
-            LocalModelFile(
-                id = "animagine-xl-mini",
-                name = "Animagine XL Mini (Anime Studio)",
-                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
-                sizeBytes = 1580000000L, // 1.58 GB
-                isDownloaded = false,
-                downloadUrl = "https://huggingface.co/Linaqruf/animagine-xl-3.0",
-                localFileName = "animagine_mini_q4.bin",
-                description = "Lightweight anime-styled illustration checkpoint optimized for modern smartphone GPUs."
-            ),
-            LocalModelFile(
-                id = "sd-v1.5-highres",
-                name = "Stable Diffusion v1.5 (High Fidelity)",
-                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
-                sizeBytes = 2450000000L, // 2.45 GB
-                isDownloaded = false,
-                downloadUrl = "https://huggingface.co/runwayml/stable-diffusion-v1-5",
-                localFileName = "sd_v1_5_fp16.bin",
-                description = "Sharp, maximum resolution drawings featuring complex technical labels and science designs."
+                downloadUrl = "",
+                localFileName = "bge-small-en-v1.5.onnx",
+                description = "Mekanisme RAG untuk memahami dokumen Anda secara lokal."
             )
         )
         _availableModels.value = models
         calculateStorage(models)
+    }
+
+    private fun isFileExists(fileName: String): Boolean {
+        return File(File(getApplication<Application>().filesDir, "models"), fileName).exists()
     }
 
     private fun calculateStorage(models: List<LocalModelFile>) {
@@ -215,38 +177,34 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
         _totalStorageUsed.value = String.format("%.2f GB", totalBytes / (1024 * 1024 * 1024.0))
     }
 
-    // Trigger fake download flow for demonstration
     fun downloadModel(modelId: String) {
-        viewModelScope.launch {
-            val updated = _availableModels.value.map {
-                if (it.id == modelId) it.copy(isDownloaded = true) else it
-            }
-            _availableModels.value = updated
-            calculateStorage(updated)
-        }
+        val model = _availableModels.value.find { it.id == modelId } ?: return
+        val modelDir = File(getApplication<Application>().filesDir, "models")
+        if (!modelDir.exists()) modelDir.mkdirs()
+        val destinationFile = File(modelDir, model.localFileName)
+
+        val request = DownloadManager.Request(Uri.parse(model.downloadUrl))
+            .setTitle("Mengunduh AI Model: ${model.name}")
+            .setDescription("Mengunduh data lokal LLM...")
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            .setDestinationUri(Uri.fromFile(destinationFile))
+
+        downloadId = downloadManager.enqueue(request)
     }
 
-    // Delete downloads to free space
     fun deleteModel(modelId: String) {
         viewModelScope.launch {
-            val updated = _availableModels.value.map {
-                if (it.id == modelId && it.id != "bge-small-en" && it.id != "mediapipe-vision") {
-                    it.copy(isDownloaded = false)
-                } else it
-            }
-            _availableModels.value = updated
-            calculateStorage(updated)
+            val model = _availableModels.value.find { it.id == modelId } ?: return@launch
+            val file = File(File(getApplication<Application>().filesDir, "models"), model.localFileName)
+            if (file.exists()) file.delete()
+            loadModelList()
         }
     }
 
-    /**
-     * Sends user message and schedules local LLM stream response
-     */
     fun sendMessage(text: String, attachedUri: Uri? = null, attachedType: MessageType? = null) {
         if (text.isBlank()) return
 
         viewModelScope.launch {
-            // Save User Message
             val userMsg = ChatMessage(
                 text = text,
                 sender = MessageSender.USER,
@@ -256,31 +214,11 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
             repository.insertMessage(userMsg)
             _isGenerating.value = true
 
-            // Formulate LLM call
             var retrievedContext: String? = null
-            var processedImageContext: String? = null
-
-            // 1. Check if we need to retrieve local RAG document chunks
             if (attachedType == MessageType.FILE) {
-                // Query RAG context matches
                 retrievedContext = ragPipeline.retrieveRelevantContext(text)
             }
 
-            // 2. Check if we have a vision component
-            if (attachedType == MessageType.IMAGE && attachedUri != null) {
-                // Simulate local image loading and analyze
-                // Let's create an placeholder explanation
-                processedImageContext = "[Vision Task: Ditemukan Diagram Sel dengan tulisan tangan f(x) = 2x^2 + 4x - 6]"
-            }
-
-            // Compile absolute content injection
-            val absolutePrompt = when {
-                retrievedContext != null -> text
-                processedImageContext != null -> "Analyze this image content: $processedImageContext and answer: $text"
-                else -> text
-            }
-
-            // Generate Assistant response bubble, empty first
             val assistantMsgId = UUID.randomUUID().toString()
             var assistantMsg = ChatMessage(
                 id = assistantMsgId,
@@ -290,8 +228,7 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
             )
             repository.insertMessage(assistantMsg)
 
-            // Collect local LLM text generation stream
-            llmEngine.generateResponseStream(absolutePrompt, retrievedContext).collect { partialText ->
+            llmEngine.generateResponseStream(text, retrievedContext).collect { partialText ->
                 if (partialText.isNotBlank()) {
                     assistantMsg = assistantMsg.copy(text = partialText)
                     repository.insertMessage(assistantMsg)
@@ -302,51 +239,20 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /**
-     * RAG File Upload
-     */
     fun indexStudyMaterial(uri: Uri, fileName: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             _isIndexing.value = true
             val result = ragPipeline.processDocument(uri, fileName)
             _isIndexing.value = false
-            result.onSuccess {
-                onSuccess()
-            }
-            result.onFailure {
-                onError(it.localizedMessage ?: "Gagal memproses dokumen")
-            }
+            result.onSuccess { onSuccess() }
+            result.onFailure { onError(it.localizedMessage ?: "Gagal memproses dokumen") }
         }
     }
 
-    /**
-     * Delete indexed study materials
-     */
     fun removeStudyMaterial(doc: StudyDocument) {
-        viewModelScope.launch {
-            repository.deleteDocument(doc)
-        }
+        viewModelScope.launch { repository.deleteDocument(doc) }
     }
 
-    /**
-     * Local Creative Stable Diffusion Generator (Standard version for backward compatibility)
-     */
-    fun generateDiffusionSketch(prompt: String) {
-        generateDiffusionSketchDetailed(
-            prompt = prompt,
-            negativePrompt = "",
-            modelId = "stable-diffusion-int4",
-            loraModel = "None",
-            aspectRatio = "1:1",
-            cfgScale = 7.5f,
-            steps = 20,
-            seed = -1L
-        )
-    }
-
-    /**
-     * Local Creative Stable Diffusion Generator with advanced parameters
-     */
     fun generateDiffusionSketchDetailed(
         prompt: String,
         negativePrompt: String,
@@ -363,128 +269,64 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
             _generatedDiagram.value = null
             _totalDiffusionSteps.value = steps
             _diffusionStep.value = 0
-            
-            // Generate seed if selected random
             val actualSeed = if (seed == -1L) (1000..9999).random().toLong() else seed
 
-            val backend = _activeBackend.value
-            // Iteratively simulate diffusion steps to give a realistic interactive UI experience
             for (currStep in 1..steps) {
                 _diffusionStep.value = currStep
-                _diffusionStatus.value = when {
-                    currStep == 1 -> "Inisialisasi latent noise dengan seed $actualSeed..."
-                    currStep == steps / 4 -> "Menganalisa layer negative prompt: \"$negativePrompt\"..."
-                    currStep == steps / 2 -> "Menerapkan adaptasi LoRA: $loraModel (${backend.technicalName})..."
-                    currStep == (steps * 3) / 4 -> "Melakukan iterasi de-noising (CFG Scale: $cfgScale)..."
-                    currStep == steps -> "Decoding latents menggunakan VAE Decoder..."
-                    else -> "Mengevaluasi denoising step $currStep dari $steps (${backend.displayName})..."
-                }
-                // Delay based on steps and adjusted by hardware backend multiplier
-                val baseDelay = (3000L / steps).coerceIn(40L, 250L)
-                val adjustedDelay = (baseDelay * backend.speedMultiplier).toLong()
-                kotlinx.coroutines.delay(adjustedDelay)
+                _diffusionStatus.value = "Generating step $currStep..."
+                kotlinx.coroutines.delay(50)
             }
 
-            // Draw the canvas diagram based on inputs
             val bitmap = stableDiffusionEngine.generateDiagramDetailed(
-                prompt = prompt,
-                negativePrompt = negativePrompt,
-                modelId = modelId,
-                loraModel = loraModel,
-                aspectRatio = aspectRatio,
-                cfgScale = cfgScale,
-                steps = steps,
-                seed = actualSeed,
-                backendName = backend.displayName
+                prompt, negativePrompt, modelId, loraModel, aspectRatio, cfgScale, steps, actualSeed, activeBackend.value.displayName
             )
-
             _generatedDiagram.value = bitmap
             _diffusionProgress.value = false
-            _diffusionStatus.value = "Selesai menggambar!"
+            _diffusionStatus.value = "Selesai!"
         }
     }
 
-    fun addAssistantGreeting(text: String) {
-        viewModelScope.launch {
-            repository.insertMessage(
-                ChatMessage(
-                    text = text,
-                    sender = MessageSender.ASSISTANT
-                )
-            )
-        }
-    }
-
-    fun insertImageMessage(bitmap: android.graphics.Bitmap, prompt: String) {
+    fun insertImageMessage(bitmap: Bitmap, prompt: String) {
         viewModelScope.launch {
             val context = getApplication<Application>().applicationContext
-            val file = java.io.File(context.cacheDir, "sd_gen_${System.currentTimeMillis()}.png")
+            val file = File(context.cacheDir, "sd_gen_${System.currentTimeMillis()}.png")
             try {
                 java.io.FileOutputStream(file).use { out ->
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
                 }
-                repository.insertMessage(
-                    ChatMessage(
-                        text = "Sketsa hasil generate local: \"$prompt\"",
-                        sender = MessageSender.USER,
-                        type = MessageType.DIAGRAM,
-                        attachmentPath = file.absolutePath
-                    )
-                )
-                repository.insertMessage(
-                    ChatMessage(
-                        text = "Ini adalah diagram/sketsa sains terkait \"$prompt\" yang baru saja kita buat di halaman Sketsa Kreatif. " +
-                               "Semua label dan format teknis digambarkan secara komparatif dengan model Stable Diffusion lokal. Apakah ada bagian dari model ini yang ingin Anda tanyakan lebih detail?",
-                        sender = MessageSender.ASSISTANT,
-                        type = MessageType.TEXT
-                    )
-                )
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+                repository.insertMessage(ChatMessage(
+                    text = "Sketsa hasil: \"$prompt\"",
+                    sender = MessageSender.USER,
+                    type = MessageType.DIAGRAM,
+                    attachmentPath = file.absolutePath
+                ))
+            } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
     fun clearHistory() {
-        viewModelScope.launch {
-            repository.clearChatHistory()
-        }
+        viewModelScope.launch { repository.clearChatHistory() }
     }
 
     fun loadSavedSketches() {
-        val context = getApplication<Application>().applicationContext
-        val dir = File(context.filesDir, "saved_sketches")
-        if (!dir.exists()) {
-            dir.mkdirs()
-        }
-        val files = dir.listFiles { file -> file.isFile && file.name.endsWith(".png") }
-        if (files != null) {
-            _savedSketches.value = files.sortedByDescending { it.lastModified() }
-        } else {
-            _savedSketches.value = emptyList()
-        }
+        val dir = File(getApplication<Application>().filesDir, "saved_sketches")
+        if (!dir.exists()) dir.mkdirs()
+        val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".png") }
+        _savedSketches.value = files?.sortedByDescending { it.lastModified() } ?: emptyList()
     }
 
     fun saveSketch(bitmap: Bitmap, prompt: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
-            val context = getApplication<Application>().applicationContext
-            val dir = File(context.filesDir, "saved_sketches")
-            if (!dir.exists()) {
-                dir.mkdirs()
-            }
-            val cleanPrompt = prompt.replace(Regex("[^a-zA-Z0-9_]"), "_").take(30)
-            val fileName = "sketch_${System.currentTimeMillis()}_$cleanPrompt.png"
-            val file = File(dir, fileName)
+            val dir = File(getApplication<Application>().filesDir, "saved_sketches")
+            if (!dir.exists()) dir.mkdirs()
+            val file = File(dir, "sketch_${System.currentTimeMillis()}.png")
             try {
                 java.io.FileOutputStream(file).use { out ->
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
                 }
                 loadSavedSketches()
                 onSuccess()
-            } catch (e: Exception) {
-                e.printStackTrace()
-                onError(e.localizedMessage ?: "Unknown error")
-            }
+            } catch (e: Exception) { onError(e.localizedMessage ?: "Error") }
         }
     }
 
