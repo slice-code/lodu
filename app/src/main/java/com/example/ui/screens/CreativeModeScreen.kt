@@ -75,7 +75,7 @@ fun CreativeModeScreen(
     // Local UI form states
     var positivePrompt by remember { mutableStateOf("") }
     var negativePrompt by remember { mutableStateOf("blurry, low quality, pixelated, distorted, bad proportions") }
-    var selectedModelId by remember { mutableStateOf("stable-diffusion-int4") }
+    var selectedModelId by remember { mutableStateOf("stable-diffusion-1.5-mnn-int8") }
     var selectedLora by remember { mutableStateOf("None") }
     var selectedAspectRatio by remember { mutableStateOf("1:1 (Square)") }
     var inferenceSteps by remember { mutableStateOf(20f) }
@@ -194,7 +194,7 @@ fun CreativeModeScreen(
                                     .background(Color(0xFF4CAF50)) // Glowing green online badge
                             )
                             Text(
-                                text = "Stable Diffusion Lokal Offline (GPU Terjamin)",
+                                text = "Stable Diffusion Lokal Offline (MNN/QNN Ready)",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontSize = 11.sp,

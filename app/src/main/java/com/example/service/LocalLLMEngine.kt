@@ -17,7 +17,7 @@ class LocalLLMEngine(private val context: Context) {
 
     private var llmInference: LlmInference? = null
     private val modelFile: File by lazy {
-        File(File(context.filesDir, "models"), "gemma-2b-it-cpu-int4.bin")
+        File(File(context.filesDir, "models"), "qwen2.5-0.5b-instruct-q8.task")
     }
 
     init {
@@ -51,7 +51,7 @@ class LocalLLMEngine(private val context: Context) {
      */
     fun generateResponseStream(prompt: String, contextText: String? = null): Flow<String> = callbackFlow {
         if (!isModelReady()) {
-            trySend("Model gemma-2b belum ditemukan. Silakan unduh di menu Kelola Model.")
+            trySend("Model Qwen2.5 0.5B belum ditemukan. Silakan unduh di menu Kelola Model.")
             close()
             return@callbackFlow
         }

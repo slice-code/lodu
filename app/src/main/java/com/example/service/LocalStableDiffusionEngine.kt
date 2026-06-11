@@ -1,9 +1,11 @@
 package com.example.service
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import java.io.File
 
 /**
  * Handles On-device Stable Diffusion and Local Image Generation.
@@ -11,7 +13,18 @@ import android.graphics.Paint
  * To make it interactive and work completely offline, this draws structured, labeled
  * science diagrams/illustrations dynamically on a Canvas based on text prompt keyframes!
  */
-class LocalStableDiffusionEngine {
+class LocalStableDiffusionEngine(private val context: Context) {
+
+    private val nativeRuntimeAvailable: Boolean by lazy {
+        runCatching {
+            System.loadLibrary("local_dream_sd")
+            true
+        }.getOrDefault(false)
+    }
+
+    private val modelsDir: File by lazy {
+        File(context.filesDir, "models")
+    }
 
     suspend fun generateDiagram(prompt: String): Bitmap {
         return generateDiagramDetailed(
@@ -37,6 +50,24 @@ class LocalStableDiffusionEngine {
         seed: Long,
         backendName: String = "GPU Vulkan Acceleration"
     ): Bitmap {
+        val modelBundle = resolveModelBundle(modelId)
+        if (modelBundle != null && nativeRuntimeAvailable) {
+            val nativeBitmap = runCatching {
+                generateNativeImage(
+                    prompt = prompt,
+                    negativePrompt = negativePrompt,
+                    modelPath = modelBundle.absolutePath,
+                    backendName = backendName,
+                    width = widthForAspectRatio(aspectRatio),
+                    height = heightForAspectRatio(aspectRatio),
+                    cfgScale = cfgScale,
+                    steps = steps,
+                    seed = seed
+                )
+            }.getOrNull()
+            if (nativeBitmap != null) return nativeBitmap
+        }
+
         // Simulation delay of offline local GPU generation
         kotlinx.coroutines.delay(100L) // smooth final pass
 
@@ -384,4 +415,45 @@ class LocalStableDiffusionEngine {
 
         return bitmap
     }
+
+    private fun resolveModelBundle(modelId: String): File? {
+        val fileName = when (modelId) {
+            "stable-diffusion-1.5-mnn-int8", "stable-diffusion-int4" -> "sd15_mnn_int8.bundle"
+            "sdxl-turbo-qnn-mobile", "sdxl-turbo-mobile-lcm" -> "sdxl_turbo_qnn.bundle"
+            else -> null
+        }
+        return fileName?.let { File(modelsDir, it) }?.takeIf { it.exists() }
+    }
+
+    private fun widthForAspectRatio(aspectRatio: String): Int {
+        return when {
+            aspectRatio.contains("16:9") -> 720
+            aspectRatio.contains("9:16") -> 405
+            aspectRatio.contains("4:3") -> 640
+            aspectRatio.contains("3:4") -> 480
+            else -> 512
+        }
+    }
+
+    private fun heightForAspectRatio(aspectRatio: String): Int {
+        return when {
+            aspectRatio.contains("16:9") -> 405
+            aspectRatio.contains("9:16") -> 720
+            aspectRatio.contains("4:3") -> 480
+            aspectRatio.contains("3:4") -> 640
+            else -> 512
+        }
+    }
+
+    private external fun generateNativeImage(
+        prompt: String,
+        negativePrompt: String,
+        modelPath: String,
+        backendName: String,
+        width: Int,
+        height: Int,
+        cfgScale: Float,
+        steps: Int,
+        seed: Long
+    ): Bitmap
 }

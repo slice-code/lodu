@@ -43,7 +43,7 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
     val llmEngine = LocalLLMEngine(application)
     val ragPipeline = LocalRAGPipeline(application, repository)
     val visionEngine = LocalVisionEngine(application)
-    val stableDiffusionEngine = LocalStableDiffusionEngine()
+    val stableDiffusionEngine = LocalStableDiffusionEngine(application)
 
     // UI States
     val chatMessages: StateFlow<List<ChatMessage>> = repository.allMessages
@@ -124,34 +124,14 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
     private fun loadModelList() {
         val models = listOf(
             LocalModelFile(
-                id = "gemma-2b-it",
-                name = "Gemma 2B IT (Real LLM)",
+                id = "gemma-3-1b-it-int4",
+                name = "Gemma 3 1B IT INT4 (MediaPipe)",
                 type = LocalModelFile.ModelType.LLM,
-                sizeBytes = 1430000000L,
+                sizeBytes = 879000000L,
                 isDownloaded = llmEngine.isModelReady(),
-                downloadUrl = "https://huggingface.co/google/gemma-2b-it-cpu-int4.bin/resolve/main/gemma-2b-it-cpu-int4.bin",
-                localFileName = "gemma-2b-it-cpu-int4.bin",
-                description = "Mesin AI asli Google Gemma 2B yang berjalan 100% offline menggunakan MediaPipe."
-            ),
-            LocalModelFile(
-                id = "llama-3.2-1b-it",
-                name = "Meta Llama 3.2 1B Instruct",
-                type = LocalModelFile.ModelType.LLM,
-                sizeBytes = 1250000000L,
-                isDownloaded = isFileExists("llama-3.2-1b-it-q4.bin"),
-                downloadUrl = "https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct/resolve/main/llama-3.2-1b-it-q4.bin",
-                localFileName = "llama-3.2-1b-it-q4.bin",
-                description = "Generasi baru LLM andalan Meta yang dirancang khusus untuk berjalan super-ringan."
-            ),
-            LocalModelFile(
-                id = "qwen-2.5-1.5b-it",
-                name = "Qwen 2.5 1.5B Instruct (Indonesian)",
-                type = LocalModelFile.ModelType.LLM,
-                sizeBytes = 1620000000L,
-                isDownloaded = isFileExists("qwen-2.5-1.5b-it-q4.bin"),
-                downloadUrl = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct/resolve/main/qwen-2.5-1.5b-it-q4.bin",
-                localFileName = "qwen-2.5-1.5b-it-q4.bin",
-                description = "Sangat fasih dalam percakapan Bahasa Indonesia secara offline."
+                downloadUrl = "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task",
+                localFileName = "gemma3-1b-it-int4.task",
+                description = "Model Gemma 3 1B IT format .task resmi LiteRT Community untuk MediaPipe LLM Inference Android."
             ),
             LocalModelFile(
                 id = "bge-small-en",
@@ -162,6 +142,26 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
                 downloadUrl = "",
                 localFileName = "bge-small-en-v1.5.onnx",
                 description = "Mekanisme RAG untuk memahami dokumen Anda secara lokal."
+            ),
+            LocalModelFile(
+                id = "stable-diffusion-1.5-mnn-int8",
+                name = "Stable Diffusion 1.5 MNN INT8",
+                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
+                sizeBytes = 2100000000L,
+                isDownloaded = isFileExists("sd15_mnn_int8.bundle"),
+                downloadUrl = "",
+                localFileName = "sd15_mnn_int8.bundle",
+                description = "Paket model SD 1.5 mobile untuk Alibaba MNN CPU/GPU. Tambahkan file bundle manual karena URL publik belum dikonfirmasi."
+            ),
+            LocalModelFile(
+                id = "sdxl-turbo-qnn-mobile",
+                name = "SDXL Turbo Qualcomm QNN",
+                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
+                sizeBytes = 3600000000L,
+                isDownloaded = isFileExists("sdxl_turbo_qnn.bundle"),
+                downloadUrl = "",
+                localFileName = "sdxl_turbo_qnn.bundle",
+                description = "Paket SDXL Turbo mobile untuk Qualcomm QNN SDK. Tambahkan file bundle manual karena URL publik belum dikonfirmasi."
             )
         )
         _availableModels.value = models
@@ -179,13 +179,14 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
 
     fun downloadModel(modelId: String) {
         val model = _availableModels.value.find { it.id == modelId } ?: return
+        if (model.downloadUrl.isBlank()) return
         val modelDir = File(getApplication<Application>().filesDir, "models")
         if (!modelDir.exists()) modelDir.mkdirs()
         val destinationFile = File(modelDir, model.localFileName)
 
         val request = DownloadManager.Request(Uri.parse(model.downloadUrl))
             .setTitle("Mengunduh AI Model: ${model.name}")
-            .setDescription("Mengunduh data lokal LLM...")
+            .setDescription("Mengunduh data model AI lokal...")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setDestinationUri(Uri.fromFile(destinationFile))
 
