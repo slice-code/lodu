@@ -1,5 +1,5 @@
 {
-  "name": "EduLocal AI",
+  "name": "Lodu",
   "description": "Offline-first, privacy-focused educational assistant running entirely on-device.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
