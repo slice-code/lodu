@@ -17,6 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
@@ -32,6 +33,9 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -46,9 +50,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.BorderStroke
 import com.example.data.model.ChatMessage
 import com.example.data.model.MessageSender
 import com.example.data.model.MessageType
+import com.example.data.model.LocalModelFile
 import com.example.ui.components.MarkdownText
 import com.example.ui.viewmodel.EduLocalViewModel
 import kotlinx.coroutines.launch
@@ -129,10 +135,25 @@ fun ChatScreen(
     val coroutineScope = rememberCoroutineScope()
     var textInput by remember { mutableStateOf("") }
     
-    // Character selection state variables
-    var selectedCharacter by remember { mutableStateOf(AI_CHARACTERS[0]) }
+    val chatSessions by viewModel.chatSessions.collectAsState()
+    val activeSessionId by viewModel.activeSessionId.collectAsState()
+
+    val activeSession = remember(chatSessions, activeSessionId) {
+        chatSessions.find { it.id == activeSessionId }
+    }
+    val selectedCharacter = remember(activeSession) {
+        AI_CHARACTERS.find { it.id == activeSession?.characterId } ?: AI_CHARACTERS[0]
+    }
+
     var showCharacterSelector by remember { mutableStateOf(false) }
     var isFavorited by remember { mutableStateOf(false) }
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    
+    var showModelSelector by remember { mutableStateOf(false) }
+    val selectedLlmModelId by viewModel.selectedLlmModelId.collectAsState()
+    val availableLlmModels = remember(localModels) {
+        localModels.filter { it.type == LocalModelFile.ModelType.LLM }
+    }
 
     // Attachment state management
     var attachedUri by remember { mutableStateOf<Uri?>(null) }
@@ -167,10 +188,162 @@ fun ChatScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet(
+                modifier = Modifier
+                    .width(300.dp)
+                    .fillMaxHeight(),
+                drawerContainerColor = MaterialTheme.colorScheme.surface,
+                drawerShape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                ) {
+                    Text(
+                        text = "Riwayat Obrolan",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 12.dp, top = 8.dp)
+                    )
+
+                    Button(
+                        onClick = {
+                            viewModel.createNewSession("Sesi Tutor Baru", selectedCharacter.id)
+                            coroutineScope.launch { drawerState.close() }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 16.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Sesi Baru")
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(bottom = 12.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(chatSessions) { session ->
+                            val isSelected = session.id == activeSessionId
+                            val char = AI_CHARACTERS.find { it.id == session.characterId } ?: AI_CHARACTERS[0]
+
+                            Card(
+                                onClick = {
+                                    viewModel.selectSession(session.id)
+                                    coroutineScope.launch { drawerState.close() }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isSelected)
+                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                                    else
+                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                border = if (isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .clip(CircleShape)
+                                                .background(char.avatarBg),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(char.iconEmoji, fontSize = 16.sp)
+                                        }
+                                        Column {
+                                            Text(
+                                                text = session.title,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            val dateText = remember(session.timestamp) {
+                                                SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault()).format(Date(session.timestamp))
+                                            }
+                                            Text(
+                                                text = "${char.name} • $dateText",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                                fontSize = 10.sp
+                                            )
+                                        }
+                                    }
+
+                                    IconButton(
+                                        onClick = {
+                                            viewModel.deleteSession(session.id)
+                                        },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.DeleteOutline,
+                                            contentDescription = "Hapus",
+                                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (chatSessions.isNotEmpty()) {
+                        TextButton(
+                            onClick = {
+                                viewModel.clearHistory()
+                                coroutineScope.launch { drawerState.close() }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                        ) {
+                            Text("Bersihkan Semua History", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+        }
+    ) {
+        Scaffold(
+            contentWindowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Top),
+            topBar = {
+                TopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            coroutineScope.launch { drawerState.open() }
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Menu,
+                                contentDescription = "Buka Riwayat",
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    },
+                    title = {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -226,35 +399,78 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    IconButton(
-                        onClick = { onNavigateToCreative?.invoke() },
-                        modifier = Modifier.testTag("shortcut_stable_diffusion_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AutoAwesome,
-                            contentDescription = "Buka Stable Diffusion",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    IconButton(onClick = { isFavorited = !isFavorited }) {
-                        Icon(
-                            imageVector = if (isFavorited) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            contentDescription = "Favorit",
-                            tint = if (isFavorited) Color(0xFFE91E63) else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    IconButton(
-                        onClick = { viewModel.clearHistory() },
-                        modifier = Modifier.testTag("clear_history_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeleteOutline,
-                            contentDescription = "Clear History",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(22.dp)
-                        )
+                    var showTopMenu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { showTopMenu = true }) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "Pilihan Lainnya",
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showTopMenu,
+                            onDismissRequest = { showTopMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Pilih Model LLM") },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Memory,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                },
+                                onClick = {
+                                    showTopMenu = false
+                                    showModelSelector = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Buka Stable Diffusion") },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                },
+                                onClick = {
+                                    showTopMenu = false
+                                    onNavigateToCreative?.invoke()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (isFavorited) "Hapus dari Favorit" else "Tambah ke Favorit") },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = if (isFavorited) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                        contentDescription = null,
+                                        tint = if (isFavorited) Color(0xFFE91E63) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                },
+                                onClick = {
+                                    showTopMenu = false
+                                    isFavorited = !isFavorited
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Bersihkan Chat") },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.DeleteOutline,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                },
+                                onClick = {
+                                    showTopMenu = false
+                                    viewModel.clearHistory()
+                                }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -264,10 +480,125 @@ fun ChatScreen(
         },
         modifier = modifier
     ) { innerPadding ->
-        // Active configuration pills state matching Screen 3 of screenshot
-        var activeTone by remember { mutableStateOf("Tutor Indonesia") }
-        var activeStyle by remember { mutableStateOf("Optimistic") }
-        var activeOutput by remember { mutableStateOf("Default") }
+
+
+        // Model Selector Dialog
+        if (showModelSelector) {
+            Dialog(onDismissRequest = { showModelSelector = false }) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .wrapContentHeight()
+                        .padding(horizontal = 4.dp),
+                    shape = RoundedCornerShape(28.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 8.dp
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(36.dp)
+                                .height(4.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f))
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Pilih Model Chat LLM",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Model yang aktif akan memproses pesan Anda. Pastikan model sudah diunduh terlebih dahulu.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 320.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            availableLlmModels.forEach { model ->
+                                val isSelected = selectedLlmModelId == model.id
+                                val isDownloaded = model.isDownloaded
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(enabled = isDownloaded) {
+                                            viewModel.selectLlmModel(model.id)
+                                            showModelSelector = false
+                                        },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isSelected)
+                                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+                                        else
+                                            MaterialTheme.colorScheme.surface
+                                    ),
+                                    shape = RoundedCornerShape(16.dp),
+                                    border = BorderStroke(
+                                        width = if (isSelected) 1.5.dp else 1.dp,
+                                        color = if (isSelected)
+                                            MaterialTheme.colorScheme.primary
+                                        else
+                                            MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(14.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        RadioButton(
+                                            selected = isSelected,
+                                            onClick = {
+                                                if (isDownloaded) {
+                                                    viewModel.selectLlmModel(model.id)
+                                                    showModelSelector = false
+                                                }
+                                            },
+                                            enabled = isDownloaded
+                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = model.name,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isDownloaded) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = if (isDownloaded) "Siap digunakan • ${model.displaySize}" else "Belum diunduh (Penyimpanan: ${model.displaySize})",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = if (isDownloaded) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        TextButton(onClick = { showModelSelector = false }) {
+                            Text("Batal")
+                        }
+                    }
+                }
+            }
+        }
 
         // Character Select Sheet/Dialog matching Screen 2 style
         if (showCharacterSelector) {
@@ -319,7 +650,7 @@ fun ChatScreen(
 
                         Spacer(modifier = Modifier.height(20.dp))
 
-                        var tempSelected by remember { mutableStateOf(selectedCharacter) }
+                        var tempSelected by remember(selectedCharacter) { mutableStateOf(selectedCharacter) }
                         
                         // Selectable Characters List
                         Column(
@@ -409,7 +740,7 @@ fun ChatScreen(
                         // Large accent Selection Button
                         Button(
                             onClick = {
-                                selectedCharacter = tempSelected
+                                viewModel.createNewSession("Sesi ${tempSelected.name}", tempSelected.id)
                                 showCharacterSelector = false
                             },
                             modifier = Modifier
@@ -438,6 +769,97 @@ fun ChatScreen(
                 .padding(innerPadding)
                 .background(MaterialTheme.colorScheme.background)
         ) {
+            // Active session title bar matching the mockup (Screen 3)
+            var showEditTitleDialog by remember { mutableStateOf(false) }
+            activeSession?.let { currentSession ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = currentSession.title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Edit button as a rounded-square outline container
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                .clickable { showEditTitleDialog = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Ubah Topik",
+                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+                        // Plus button as a rounded-square outline container
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                .clickable { viewModel.createNewSession("Sesi Tutor Baru", selectedCharacter.id) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Sesi Baru",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                if (showEditTitleDialog) {
+                    var tempTitle by remember { mutableStateOf(currentSession.title) }
+                    AlertDialog(
+                        onDismissRequest = { showEditTitleDialog = false },
+                        title = { Text("Ubah Topik Belajar") },
+                        text = {
+                            OutlinedTextField(
+                                value = tempTitle,
+                                onValueChange = { tempTitle = it },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                viewModel.updateSessionTitle(currentSession.id, tempTitle)
+                                showEditTitleDialog = false
+                            }) {
+                                Text("Simpan")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showEditTitleDialog = false }) {
+                                Text("Batal")
+                            }
+                        }
+                    )
+                }
+            }
+
             // Message List
             LazyColumn(
                 state = listState,
@@ -445,7 +867,7 @@ fun ChatScreen(
                     .weight(1f)
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Bottom)
             ) {
                 item {
                     Spacer(modifier = Modifier.height(8.dp))
@@ -640,258 +1062,139 @@ fun ChatScreen(
                 }
             }
 
-            // Input Row Panel (Telegram/WhatsApp professional style)
+            // Input Row Panel matching Screen 3 of the mockup
             Surface(
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 6.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    // Quick Option Pills on top of Text Input bar as seen in Screen 3 of screenshot
+
+                    // Typing Bar Row
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Pill 1: Mode/Language selection
-                        Surface(
-                            onClick = {
-                                activeTone = when (activeTone) {
-                                    "Tutor Indonesia" -> "English Mode"
-                                    "English Mode" -> "Bilingual (Mix)"
-                                    else -> "Tutor Indonesia"
-                                }
-                            },
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    text = activeTone,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    fontSize = 10.sp
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.size(10.dp)
-                                )
-                            }
-                        }
-
-                        // Pill 2: Style Selector
-                        Surface(
-                            onClick = {
-                                activeStyle = when (activeStyle) {
-                                    "Optimistic" -> "Academic Format"
-                                    "Academic Format" -> "Ringkas & Padat"
-                                    else -> "Optimistic"
-                                }
-                            },
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    text = activeStyle,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    fontSize = 10.sp
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.size(10.dp)
-                                )
-                            }
-                        }
-
-                        // Pill 3: General Modifier Options
-                        Surface(
-                            onClick = {
-                                activeOutput = when (activeOutput) {
-                                    "Default" -> "Lengkap + Rumus"
-                                    "Lengkap + Rumus" -> "Sederhana"
-                                    else -> "Default"
-                                }
-                            },
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    text = activeOutput,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    fontSize = 10.sp
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.size(10.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    // Divider dividing pills and typing bar
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
-                            .navigationBarsPadding(),
-                        verticalAlignment = Alignment.Bottom,
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                    // Attachment option capsule
-                    Row(
-                        modifier = Modifier
-                            .height(48.dp)
-                            .background(
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                shape = RoundedCornerShape(24.dp)
-                            )
-                            .padding(horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        IconButton(
-                            onClick = { docPicker.launch("*/*") },
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .testTag("attach_file_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AttachFile,
-                                contentDescription = "Attach Study Document",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
+                        var showAttachmentMenu by remember { mutableStateOf(false) }
 
-                        IconButton(
-                            onClick = { imagePicker.launch("image/*") },
+                        TextField(
+                            value = textInput,
+                            onValueChange = { textInput = it },
+                            placeholder = {
+                                Text(
+                                    "Tanya EduLocal...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                )
+                            },
+                            leadingIcon = {
+                                Box {
+                                    IconButton(onClick = { showAttachmentMenu = true }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = "Add Attachment",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = showAttachmentMenu,
+                                        onDismissRequest = { showAttachmentMenu = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("Unggah Dokumen (.txt)", fontSize = 12.sp) },
+                                            leadingIcon = { Icon(Icons.Default.AttachFile, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                                            onClick = {
+                                                showAttachmentMenu = false
+                                                docPicker.launch("text/*")
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Unggah Gambar", fontSize = 12.sp) },
+                                            leadingIcon = { Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                                            onClick = {
+                                                showAttachmentMenu = false
+                                                imagePicker.launch("image/*")
+                                            }
+                                        )
+                                    }
+                                }
+                            },
                             modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .testTag("attach_image_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Image,
-                                contentDescription = "Attach Homework Photo",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
+                                .weight(1f)
+                                .heightIn(min = 48.dp, max = 112.dp)
+                                .border(
+                                    width = 1.dp,
+                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(24.dp)
+                                )
+                                .clip(RoundedCornerShape(24.dp))
+                                .testTag("chat_input_field"),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                disabledIndicatorColor = Color.Transparent
+                            ),
+                            singleLine = false,
+                            maxLines = 4
+                        )
 
+                        // SD Shortcut Button
                         IconButton(
                             onClick = { onNavigateToCreative?.invoke() },
                             modifier = Modifier
-                                .size(40.dp)
+                                .size(46.dp)
                                 .clip(CircleShape)
-                                .testTag("attach_stable_diffusion_button")
+                                .background(Color(0xFFE0F2F1))
+                                .testTag("shortcut_stable_diffusion_input_btn")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.AutoAwesome,
                                 contentDescription = "Buka Stable Diffusion",
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = Color(0xFF00796B),
                                 modifier = Modifier.size(20.dp)
                             )
                         }
-                    }
 
-                    // Text input field inside custom styled pill
-                    TextField(
-                        value = textInput,
-                        onValueChange = { textInput = it },
-                        placeholder = { 
-                            Text(
-                                "Tanya EduLocal...", 
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                            ) 
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 48.dp, max = 120.dp)
-                            .border(
-                                width = 1.dp,
-                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
-                                shape = RoundedCornerShape(24.dp)
+                        // Send Button
+                        val canSend = textInput.isNotBlank() || attachedUri != null
+                        IconButton(
+                            onClick = {
+                                if (canSend) {
+                                    viewModel.sendMessage(textInput, attachedUri, attachedType)
+                                    textInput = ""
+                                    attachedUri = null
+                                    attachedType = null
+                                    attachedFileName = ""
+                                }
+                            },
+                            enabled = canSend,
+                            modifier = Modifier
+                                .size(46.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (canSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                )
+                                .testTag("send_message_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                contentDescription = "Kirim",
+                                tint = if (canSend) MaterialTheme.colorScheme.onPrimary else Color.Gray,
+                                modifier = Modifier.size(20.dp)
                             )
-                            .clip(RoundedCornerShape(24.dp))
-                            .testTag("chat_input_field"),
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent,
-                            disabledIndicatorColor = Color.Transparent
-                        ),
-                        singleLine = false,
-                        maxLines = 4
-                    )
-
-                    // Floating action style send button
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (textInput.isNotBlank() || attachedUri != null)
-                                    MaterialTheme.colorScheme.primary
-                                else
-                                    MaterialTheme.colorScheme.surfaceVariant
-                            )
-                            .clickable(enabled = textInput.isNotBlank() || attachedUri != null) {
-                                viewModel.sendMessage(textInput, attachedUri, attachedType)
-                                textInput = ""
-                                attachedUri = null
-                                attachedType = null
-                                attachedFileName = ""
-                            }
-                            .testTag("send_message_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Send Message",
-                            tint = if (textInput.isNotBlank() || attachedUri != null)
-                                MaterialTheme.colorScheme.onPrimary
-                            else
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                            modifier = Modifier.size(20.dp)
-                        )
+                        }
                     }
                 }
             }
         }
     }
-}
+    }
 }
 
 @Composable
@@ -951,7 +1254,9 @@ fun ChatBubble(message: ChatMessage) {
                         bottomEnd = if (isUser) 2.dp else 16.dp
                     ),
                     tonalElevation = if (isUser) 1.dp else 3.dp,
-                    modifier = Modifier.widthIn(max = 290.dp)
+                    modifier = Modifier
+                        .widthIn(max = 320.dp)
+                        .fillMaxWidth(0.85f)
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         // Display attachment notice inside chat bubble

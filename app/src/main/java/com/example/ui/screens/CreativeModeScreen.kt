@@ -173,6 +173,7 @@ fun CreativeModeScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Top),
         topBar = {
             TopAppBar(
                 title = {
@@ -538,7 +539,7 @@ fun CreativeModeScreen(
                                 placeholder = { Text("Tulis ide visual sains seperti 'peta atom bohr terperinci'...", fontSize = 12.sp) },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(100.dp)
+                                    .heightIn(min = 100.dp)
                                     .testTag("sd_positive_prompt"),
                                 leadingIcon = { Icon(Icons.Default.Brush, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) },
                                 shape = RoundedCornerShape(10.dp),
@@ -565,7 +566,7 @@ fun CreativeModeScreen(
                                 placeholder = { Text("blurry, bad proportions, distorted...", fontSize = 12.sp) },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(68.dp)
+                                    .heightIn(min = 68.dp)
                                     .testTag("sd_negative_prompt"),
                                 leadingIcon = { Icon(Icons.Default.Block, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(18.dp)) },
                                 shape = RoundedCornerShape(10.dp),

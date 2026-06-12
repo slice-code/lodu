@@ -80,14 +80,14 @@ class MainActivity : ComponentActivity() {
                             NavigationBarItem(
                                 selected = currentTab == NavigationTab.MODEL,
                                 onClick = { currentTab = NavigationTab.MODEL },
-                                icon = { Icon(Icons.Default.Settings, contentDescription = "Kelola Model") },
-                                label = { Text("Model", style = MaterialTheme.typography.labelSmall) },
+                                icon = { Icon(Icons.Default.Settings, contentDescription = "Pengaturan") },
+                                label = { Text("Pengaturan", style = MaterialTheme.typography.labelSmall) },
                                 modifier = Modifier.testTag("tab_model")
                             )
                         }
                     }
                 ) { innerPadding ->
-                    val contentModifier = Modifier.padding(innerPadding)
+                    val contentModifier = Modifier.padding(bottom = innerPadding.calculateBottomPadding())
                     when (currentTab) {
                         NavigationTab.CHAT -> ChatScreen(
                             viewModel = viewModel,

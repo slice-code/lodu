@@ -420,6 +420,8 @@ class LocalStableDiffusionEngine(private val context: Context) {
         val fileName = when (modelId) {
             "stable-diffusion-1.5-mnn-int8", "stable-diffusion-int4" -> "sd15_mnn_int8.bundle"
             "sdxl-turbo-qnn-mobile", "sdxl-turbo-mobile-lcm" -> "sdxl_turbo_qnn.bundle"
+            "animagine-xl-mini" -> "animagine_xl_mini.bundle"
+            "sd-v1.5-highres" -> "sd_v1.5_highres.bundle"
             else -> null
         }
         return fileName?.let { File(modelsDir, it) }?.takeIf { it.exists() }

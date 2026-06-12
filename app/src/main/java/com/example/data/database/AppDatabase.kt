@@ -6,13 +6,14 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import com.example.data.model.ChatMessage
+import com.example.data.model.ChatSession
 import com.example.data.model.Converters
 import com.example.data.model.DocumentChunk
 import com.example.data.model.StudyDocument
 
 @Database(
-    entities = [ChatMessage::class, StudyDocument::class, DocumentChunk::class],
-    version = 1,
+    entities = [ChatMessage::class, ChatSession::class, StudyDocument::class, DocumentChunk::class],
+    version = 2,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -30,7 +31,9 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "edulocal_database"
-                ).build()
+                )
+                .fallbackToDestructiveMigration()
+                .build()
                 INSTANCE = instance
                 instance
             }

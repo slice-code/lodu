@@ -1,14 +1,12 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
-import android.app.DownloadManager
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
+import android.os.Build
+import com.example.service.ModelDownloadService
+import com.example.service.ModelDownloadManager
 import android.graphics.Bitmap
 import android.net.Uri
-import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -30,9 +28,16 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.net.URL
 import java.util.UUID
+import com.example.data.model.ChatSession
+import org.json.JSONArray
+import org.json.JSONObject
 
 class EduLocalViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -46,7 +51,21 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
     val stableDiffusionEngine = LocalStableDiffusionEngine(application)
 
     // UI States
-    val chatMessages: StateFlow<List<ChatMessage>> = repository.allMessages
+    private val _activeSessionId = MutableStateFlow<String?>(null)
+    val activeSessionId: StateFlow<String?> = _activeSessionId.asStateFlow()
+
+    val chatSessions: StateFlow<List<ChatSession>> = repository.allSessions
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val chatMessages: StateFlow<List<ChatMessage>> = _activeSessionId
+        .flatMapLatest { sessionId ->
+            if (sessionId != null) {
+                repository.getMessagesForSession(sessionId)
+            } else {
+                kotlinx.coroutines.flow.flowOf(emptyList())
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val indexedDocuments: StateFlow<List<StudyDocument>> = repository.allDocuments
@@ -82,6 +101,10 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
     private val _totalStorageUsed = MutableStateFlow("0.0 GB")
     val totalStorageUsed: StateFlow<String> = _totalStorageUsed.asStateFlow()
 
+    val downloadingModelIds: StateFlow<Set<String>> = ModelDownloadManager.downloadingModelIds
+    val modelDownloadStatus: StateFlow<String> = ModelDownloadManager.modelDownloadStatus
+    val modelDownloadProgress: StateFlow<Map<String, Float>> = ModelDownloadManager.modelDownloadProgress
+
     // Gallery Sketches states
     private val _savedSketches = MutableStateFlow<List<File>>(emptyList())
     val savedSketches: StateFlow<List<File>> = _savedSketches.asStateFlow()
@@ -90,48 +113,121 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
     private val _activeBackend = MutableStateFlow(GpuAccelerationBackend.VULKAN)
     val activeBackend: StateFlow<GpuAccelerationBackend> = _activeBackend.asStateFlow()
 
-    private val downloadManager = application.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-    private var downloadId: Long = -1
-
     fun setAccelerationBackend(backend: GpuAccelerationBackend) {
         _activeBackend.value = backend
+    }
+
+    private val _selectedLlmModelId = MutableStateFlow("qwen-2.5-0.5b-it-q8")
+    val selectedLlmModelId: StateFlow<String> = _selectedLlmModelId.asStateFlow()
+
+    fun selectLlmModel(modelId: String) {
+        val model = _availableModels.value.find { it.id == modelId && it.type == LocalModelFile.ModelType.LLM } ?: return
+        _selectedLlmModelId.value = modelId
+        llmEngine.selectModel(model.localFileName)
     }
 
     init {
         loadModelList()
         loadSavedSketches()
-        registerDownloadReceiver()
-    }
-
-    private fun registerDownloadReceiver() {
-        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                val id = intent?.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
-                if (id == downloadId) {
-                    loadModelList()
+        viewModelScope.launch {
+            ModelDownloadManager.downloadingModelIds.collect {
+                loadModelList()
+            }
+        }
+        viewModelScope.launch {
+            repository.allSessions.collect { sessions ->
+                if (_activeSessionId.value == null) {
+                    if (sessions.isNotEmpty()) {
+                        _activeSessionId.value = sessions.first().id
+                    } else {
+                        createNewSession("Sesi Tutor Baru", "general-tutor")
+                    }
                 }
             }
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            getApplication<Application>().registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            getApplication<Application>().registerReceiver(receiver, filter)
+    }
+
+    private fun getCustomModels(): List<LocalModelFile> {
+        val prefs = getApplication<Application>().getSharedPreferences("custom_models_prefs", android.content.Context.MODE_PRIVATE)
+        val jsonStr = prefs.getString("custom_models_list", null) ?: return emptyList()
+        val list = mutableListOf<LocalModelFile>()
+        try {
+            val array = JSONArray(jsonStr)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                val fileName = obj.getString("localFileName")
+                val isDownloaded = isFileExists(fileName, obj.optLong("sizeBytes", 0L))
+                list.add(
+                    LocalModelFile(
+                        id = obj.getString("id"),
+                        name = obj.getString("name"),
+                        type = LocalModelFile.ModelType.valueOf(obj.getString("type")),
+                        sizeBytes = obj.optLong("sizeBytes", 0L),
+                        isDownloaded = isDownloaded,
+                        downloadUrl = "",
+                        localFileName = fileName,
+                        description = obj.optString("description", "Model kustom eksternal.")
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
+        return list
+    }
+
+    private fun saveCustomModel(model: LocalModelFile) {
+        val prefs = getApplication<Application>().getSharedPreferences("custom_models_prefs", android.content.Context.MODE_PRIVATE)
+        val jsonStr = prefs.getString("custom_models_list", null)
+        val array = if (jsonStr != null) {
+            try { JSONArray(jsonStr) } catch(e: Exception) { JSONArray() }
+        } else {
+            JSONArray()
+        }
+        
+        val obj = JSONObject().apply {
+            put("id", model.id)
+            put("name", model.name)
+            put("type", model.type.name)
+            put("sizeBytes", model.sizeBytes)
+            put("localFileName", model.localFileName)
+            put("description", model.description)
+        }
+        array.put(obj)
+        prefs.edit().putString("custom_models_list", array.toString()).apply()
     }
 
     private fun loadModelList() {
-        val models = listOf(
+        val hardcodedModels = listOf(
             LocalModelFile(
-                id = "gemma-3-1b-it-int4",
-                name = "Gemma 3 1B IT INT4 (MediaPipe)",
+                id = "qwen-2.5-0.5b-it-q8",
+                name = "Qwen2.5 0.5B Instruct Q8 (MediaPipe)",
                 type = LocalModelFile.ModelType.LLM,
-                sizeBytes = 879000000L,
-                isDownloaded = llmEngine.isModelReady(),
-                downloadUrl = "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task",
-                localFileName = "gemma3-1b-it-int4.task",
-                description = "Model Gemma 3 1B IT format .task resmi LiteRT Community untuk MediaPipe LLM Inference Android."
+                sizeBytes = 546660344L,
+                isDownloaded = isFileExists("qwen2.5-0.5b-instruct-q8.task", 546660344L),
+                downloadUrl = "https://huggingface.co/litert-community/Qwen2.5-0.5B-Instruct/resolve/main/Qwen2.5-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.task",
+                localFileName = "qwen2.5-0.5b-instruct-q8.task",
+                description = "Model Qwen2.5 0.5B Instruct format .task LiteRT Community yang bebas token dan ringan untuk perangkat Android."
+            ),
+            LocalModelFile(
+                id = "qwen-2.5-1.5b-it",
+                name = "Qwen2.5 1.5B Instruct",
+                type = LocalModelFile.ModelType.LLM,
+                sizeBytes = 1650000000L,
+                isDownloaded = isFileExists("qwen2.5-1.5b-instruct-q8.task", 1650000000L),
+                downloadUrl = "https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/main/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv1280.task",
+                localFileName = "qwen2.5-1.5b-instruct-q8.task",
+                description = "Model Qwen2.5 1.5B Instruct dengan akurasi tinggi untuk Bahasa Indonesia dan koding."
+            ),
+            LocalModelFile(
+                id = "phi-3.5-mini-it",
+                name = "Phi-3.5 Mini Instruct",
+                type = LocalModelFile.ModelType.LLM,
+                sizeBytes = 2200000000L,
+                isDownloaded = isFileExists("phi3.5-mini-instruct-q8.task", 2200000000L),
+                downloadUrl = "https://huggingface.co/litert-community/Phi-3-mini-4k-instruct/resolve/main/Phi-3-mini-4k-instruct_multi-prefill-seq_q8_ekv1280.task",
+                localFileName = "phi3.5-mini-instruct-q8.task",
+                description = "Model Microsoft Phi 3.5 Mini dengan penalaran logika dan sains kompleks."
             ),
             LocalModelFile(
                 id = "bge-small-en",
@@ -148,7 +244,7 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
                 name = "Stable Diffusion 1.5 MNN INT8",
                 type = LocalModelFile.ModelType.STABLE_DIFFUSION,
                 sizeBytes = 2100000000L,
-                isDownloaded = isFileExists("sd15_mnn_int8.bundle"),
+                isDownloaded = isFileExists("sd15_mnn_int8.bundle", 2100000000L),
                 downloadUrl = "",
                 localFileName = "sd15_mnn_int8.bundle",
                 description = "Paket model SD 1.5 mobile untuk Alibaba MNN CPU/GPU. Tambahkan file bundle manual karena URL publik belum dikonfirmasi."
@@ -158,18 +254,66 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
                 name = "SDXL Turbo Qualcomm QNN",
                 type = LocalModelFile.ModelType.STABLE_DIFFUSION,
                 sizeBytes = 3600000000L,
-                isDownloaded = isFileExists("sdxl_turbo_qnn.bundle"),
+                isDownloaded = isFileExists("sdxl_turbo_qnn.bundle", 3600000000L),
                 downloadUrl = "",
                 localFileName = "sdxl_turbo_qnn.bundle",
                 description = "Paket SDXL Turbo mobile untuk Qualcomm QNN SDK. Tambahkan file bundle manual karena URL publik belum dikonfirmasi."
+            ),
+            LocalModelFile(
+                id = "animagine-xl-mini",
+                name = "Animagine XL Mini",
+                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
+                sizeBytes = 2800000000L,
+                isDownloaded = isFileExists("animagine_xl_mini.bundle", 2800000000L),
+                downloadUrl = "",
+                localFileName = "animagine_xl_mini.bundle",
+                description = "Model anime/ilustrasi mini untuk pembuatan sketsa artistik secara lokal."
+            ),
+            LocalModelFile(
+                id = "sd-v1.5-highres",
+                name = "SD v1.5 High-Resolution",
+                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
+                sizeBytes = 4200000000L,
+                isDownloaded = isFileExists("sd_v1.5_highres.bundle", 4200000000L),
+                downloadUrl = "",
+                localFileName = "sd_v1.5_highres.bundle",
+                description = "Model Stable Diffusion resolusi tinggi untuk diagram presisi tinggi dan struktur detail."
+            ),
+            LocalModelFile(
+                id = "mediapipe-vision",
+                name = "MediaPipe Vision Engine",
+                type = LocalModelFile.ModelType.VISION,
+                sizeBytes = 80000000L,
+                isDownloaded = isFileExists("mediapipe_vision.task", 80000000L),
+                downloadUrl = "",
+                localFileName = "mediapipe_vision.task",
+                description = "Model visi komputer lokal untuk kamera, analisis gambar, dan deteksi objek."
+            ),
+            LocalModelFile(
+                id = "moondream2-tiny",
+                name = "Moondream2 Tiny Multimodal",
+                type = LocalModelFile.ModelType.VISION,
+                sizeBytes = 950000000L,
+                isDownloaded = isFileExists("moondream2_tiny.task", 950000000L),
+                downloadUrl = "",
+                localFileName = "moondream2_tiny.task",
+                description = "Model visual chat multimodal mungil untuk menerjemahkan objek gambar ke teks secara offline."
             )
         )
+        val customModels = getCustomModels()
+        val models = hardcodedModels + customModels
         _availableModels.value = models
         calculateStorage(models)
     }
 
-    private fun isFileExists(fileName: String): Boolean {
-        return File(File(getApplication<Application>().filesDir, "models"), fileName).exists()
+    private fun isFileExists(fileName: String, expectedSize: Long = 0L): Boolean {
+        val file = File(File(getApplication<Application>().filesDir, "models"), fileName)
+        if (!file.exists()) return false
+        if (expectedSize > 0L) {
+            // Check if file size is at least 95% of expected size to verify completeness
+            return file.length() >= (expectedSize * 0.95).toLong()
+        }
+        return file.length() > 0L
     }
 
     private fun calculateStorage(models: List<LocalModelFile>) {
@@ -179,18 +323,26 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
 
     fun downloadModel(modelId: String) {
         val model = _availableModels.value.find { it.id == modelId } ?: return
-        if (model.downloadUrl.isBlank()) return
-        val modelDir = File(getApplication<Application>().filesDir, "models")
-        if (!modelDir.exists()) modelDir.mkdirs()
-        val destinationFile = File(modelDir, model.localFileName)
+        if (model.downloadUrl.isBlank() || downloadingModelIds.value.contains(modelId)) return
 
-        val request = DownloadManager.Request(Uri.parse(model.downloadUrl))
-            .setTitle("Mengunduh AI Model: ${model.name}")
-            .setDescription("Mengunduh data model AI lokal...")
-            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationUri(Uri.fromFile(destinationFile))
+        val context = getApplication<Application>().applicationContext
+        val intent = Intent(context, ModelDownloadService::class.java).apply {
+            putExtra("model_id", modelId)
+            putExtra("model_name", model.name)
+            putExtra("download_url", model.downloadUrl)
+            putExtra("file_name", model.localFileName)
+            putExtra("size_bytes", model.sizeBytes)
+        }
 
-        downloadId = downloadManager.enqueue(request)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
+    }
+
+    fun clearDownloadStatus() {
+        ModelDownloadManager.setStatus("")
     }
 
     fun deleteModel(modelId: String) {
@@ -198,7 +350,129 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
             val model = _availableModels.value.find { it.id == modelId } ?: return@launch
             val file = File(File(getApplication<Application>().filesDir, "models"), model.localFileName)
             if (file.exists()) file.delete()
+            
+            // Remove custom model metadata from SharedPreferences if it exists
+            val prefs = getApplication<Application>().getSharedPreferences("custom_models_prefs", android.content.Context.MODE_PRIVATE)
+            val jsonStr = prefs.getString("custom_models_list", null)
+            if (jsonStr != null) {
+                try {
+                    val array = JSONArray(jsonStr)
+                    val newArray = JSONArray()
+                    for (i in 0 until array.length()) {
+                        val obj = array.getJSONObject(i)
+                        if (obj.getString("id") != modelId) {
+                            newArray.put(obj)
+                        }
+                    }
+                    prefs.edit().putString("custom_models_list", newArray.toString()).apply()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            
             loadModelList()
+        }
+    }
+
+    fun importCustomModel(
+        uri: Uri,
+        name: String,
+        type: LocalModelFile.ModelType,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val context = getApplication<Application>().applicationContext
+            val contentResolver = context.contentResolver
+            
+            var fileName = ""
+            var fileSize = 0L
+            
+            val cursor = contentResolver.query(uri, null, null, null, null)
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val nameIndex = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    val sizeIndex = it.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                    if (nameIndex != -1) fileName = it.getString(nameIndex)
+                    if (sizeIndex != -1) fileSize = it.getLong(sizeIndex)
+                }
+            }
+            
+            if (fileName.isBlank()) {
+                fileName = "custom_model_${System.currentTimeMillis()}"
+                if (type == LocalModelFile.ModelType.STABLE_DIFFUSION) {
+                    fileName += ".bundle"
+                } else {
+                    fileName += ".task"
+                }
+            }
+            
+            val modelDir = File(context.filesDir, "models")
+            if (!modelDir.exists()) modelDir.mkdirs()
+            val destinationFile = File(modelDir, fileName)
+            
+            _isGenerating.value = true
+            
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        destinationFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                }
+            }
+            
+            _isGenerating.value = false
+            
+            result.onSuccess {
+                val size = if (fileSize > 0L) fileSize else destinationFile.length()
+                val customModel = LocalModelFile(
+                    id = "custom-${UUID.randomUUID()}",
+                    name = name,
+                    type = type,
+                    sizeBytes = size,
+                    isDownloaded = true,
+                    downloadUrl = "",
+                    localFileName = fileName,
+                    description = "Model kustom eksternal diimpor dari perangkat."
+                )
+                saveCustomModel(customModel)
+                loadModelList()
+                onSuccess()
+            }.onFailure { e ->
+                if (destinationFile.exists()) {
+                    destinationFile.delete()
+                }
+                onError(e.localizedMessage ?: "Gagal menyalin file model")
+            }
+        }
+    }
+
+    fun selectSession(sessionId: String) {
+        _activeSessionId.value = sessionId
+    }
+
+    fun createNewSession(title: String, characterId: String) {
+        viewModelScope.launch {
+            val newSession = ChatSession(title = title, characterId = characterId)
+            repository.insertSession(newSession)
+            _activeSessionId.value = newSession.id
+        }
+    }
+
+    fun updateSessionTitle(sessionId: String, newTitle: String) {
+        viewModelScope.launch {
+            repository.updateSessionTitle(sessionId, newTitle)
+        }
+    }
+
+    fun deleteSession(sessionId: String) {
+        viewModelScope.launch {
+            repository.deleteSession(sessionId)
+            if (_activeSessionId.value == sessionId) {
+                _activeSessionId.value = null
+            }
         }
     }
 
@@ -206,7 +480,9 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
         if (text.isBlank()) return
 
         viewModelScope.launch {
+            val sessionId = _activeSessionId.value ?: return@launch
             val userMsg = ChatMessage(
+                sessionId = sessionId,
                 text = text,
                 sender = MessageSender.USER,
                 type = attachedType ?: MessageType.TEXT,
@@ -223,6 +499,7 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
             val assistantMsgId = UUID.randomUUID().toString()
             var assistantMsg = ChatMessage(
                 id = assistantMsgId,
+                sessionId = sessionId,
                 text = "...",
                 sender = MessageSender.ASSISTANT,
                 rContext = retrievedContext
@@ -295,7 +572,9 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
                 java.io.FileOutputStream(file).use { out ->
                     bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
                 }
+                val sessionId = _activeSessionId.value ?: return@launch
                 repository.insertMessage(ChatMessage(
+                    sessionId = sessionId,
                     text = "Sketsa hasil: \"$prompt\"",
                     sender = MessageSender.USER,
                     type = MessageType.DIAGRAM,
@@ -306,7 +585,10 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun clearHistory() {
-        viewModelScope.launch { repository.clearChatHistory() }
+        viewModelScope.launch {
+            val sessionId = _activeSessionId.value ?: return@launch
+            repository.deleteSession(sessionId)
+        }
     }
 
     fun loadSavedSketches() {

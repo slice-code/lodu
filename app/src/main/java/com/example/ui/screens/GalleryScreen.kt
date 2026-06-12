@@ -55,6 +55,7 @@ fun GalleryScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Top),
         topBar = {
             TopAppBar(
                 title = {

@@ -63,6 +63,7 @@ fun StudyModeScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Top),
         topBar = {
             TopAppBar(
                 title = { Text("Asisten RAG (Study Mode)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) },
