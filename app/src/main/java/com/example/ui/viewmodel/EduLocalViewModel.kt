@@ -105,6 +105,13 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
     val modelDownloadStatus: StateFlow<String> = ModelDownloadManager.modelDownloadStatus
     val modelDownloadProgress: StateFlow<Map<String, Float>> = ModelDownloadManager.modelDownloadProgress
 
+    // Model loading states
+    private val _isModelLoading = MutableStateFlow(false)
+    val isModelLoading: StateFlow<Boolean> = _isModelLoading.asStateFlow()
+
+    private val _isModelLoaded = MutableStateFlow(false)
+    val isModelLoaded: StateFlow<Boolean> = _isModelLoaded.asStateFlow()
+
     // Gallery Sketches states
     private val _savedSketches = MutableStateFlow<List<File>>(emptyList())
     val savedSketches: StateFlow<List<File>> = _savedSketches.asStateFlow()
@@ -123,15 +130,35 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
     fun selectLlmModel(modelId: String) {
         val model = _availableModels.value.find { it.id == modelId && it.type == LocalModelFile.ModelType.LLM } ?: return
         _selectedLlmModelId.value = modelId
-        llmEngine.selectModel(model.localFileName)
+        loadActiveLlmModel()
+    }
+
+    fun loadActiveLlmModel() {
+        viewModelScope.launch {
+            val modelId = _selectedLlmModelId.value
+            val model = _availableModels.value.find { it.id == modelId && it.type == LocalModelFile.ModelType.LLM } ?: return@launch
+            if (!model.isDownloaded) {
+                _isModelLoaded.value = false
+                return@launch
+            }
+            
+            _isModelLoading.value = true
+            withContext(Dispatchers.IO) {
+                llmEngine.selectAndLoadModel(model.localFileName)
+            }
+            _isModelLoaded.value = llmEngine.isEngineInitialized()
+            _isModelLoading.value = false
+        }
     }
 
     init {
         loadModelList()
         loadSavedSketches()
+        loadActiveLlmModel()
         viewModelScope.launch {
             ModelDownloadManager.downloadingModelIds.collect {
                 loadModelList()
+                loadActiveLlmModel()
             }
         }
         viewModelScope.launch {
@@ -232,6 +259,50 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
                 localFileName = "qwen2.5-1.5b-instruct-q8.task",
                 description = "Model Qwen2.5 1.5B Instruct dengan akurasi tinggi untuk Bahasa Indonesia dan koding.",
                 isResumable = isTempFileExists("qwen2.5-1.5b-instruct-q8.task")
+            ),
+            LocalModelFile(
+                id = "stable-diffusion-1.5-mnn-int8",
+                name = "Stable Diffusion 1.5 MNN INT8",
+                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
+                sizeBytes = 860000000L,
+                isDownloaded = isFileExists("sd15_mnn_int8.bundle", 860000000L),
+                downloadUrl = "https://huggingface.co/litert-community/stable-diffusion-1.5-mnn/resolve/main/sd15_mnn_int8.bundle",
+                localFileName = "sd15_mnn_int8.bundle",
+                description = "Model Stable Diffusion 1.5 dioptimalkan untuk GPU ponsel menggunakan runtime MNN INT8.",
+                isResumable = isTempFileExists("sd15_mnn_int8.bundle")
+            ),
+            LocalModelFile(
+                id = "sdxl-turbo-qnn-mobile",
+                name = "SDXL Turbo Mobile LCM (Snapdragon)",
+                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
+                sizeBytes = 1650000000L,
+                isDownloaded = isFileExists("sdxl_turbo_qnn.bundle", 1650000000L),
+                downloadUrl = "https://huggingface.co/litert-community/sdxl-turbo-qnn/resolve/main/sdxl_turbo_qnn.bundle",
+                localFileName = "sdxl_turbo_qnn.bundle",
+                description = "Model SDXL Turbo cepat dioptimalkan untuk Qualcomm NPU Snapdragon.",
+                isResumable = isTempFileExists("sdxl_turbo_qnn.bundle")
+            ),
+            LocalModelFile(
+                id = "animagine-xl-mini",
+                name = "Animagine XL Mini (Anime)",
+                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
+                sizeBytes = 1450000000L,
+                isDownloaded = isFileExists("animagine_xl_mini.bundle", 1450000000L),
+                downloadUrl = "https://huggingface.co/litert-community/animagine-xl-mnn/resolve/main/animagine_xl_mini.bundle",
+                localFileName = "animagine_xl_mini.bundle",
+                description = "Model visual anime/manga offline berkualitas tinggi untuk ilustrasi kreatif Anda.",
+                isResumable = isTempFileExists("animagine_xl_mini.bundle")
+            ),
+            LocalModelFile(
+                id = "sd-v1.5-highres",
+                name = "Stable Diffusion v1.5 High-Res",
+                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
+                sizeBytes = 1950000000L,
+                isDownloaded = isFileExists("sd_v1.5_highres.bundle", 1950000000L),
+                downloadUrl = "https://huggingface.co/litert-community/stable-diffusion-v1.5-highres/resolve/main/sd_v1.5_highres.bundle",
+                localFileName = "sd_v1.5_highres.bundle",
+                description = "Model gambar presisi tinggi dengan detail tajam untuk diagram sains.",
+                isResumable = isTempFileExists("sd_v1.5_highres.bundle")
             ),
             LocalModelFile(
                 id = "bge-small-en",

@@ -19,18 +19,24 @@ class LocalLLMEngine(private val context: Context) {
     private var llmInference: LlmInference? = null
     private var activeModelFileName: String = "qwen2.5-0.5b-instruct-q8.task"
 
-    init {
-        if (isModelReady()) {
-            initializeInference()
-        }
-    }
-
     fun selectModel(fileName: String) {
         if (activeModelFileName != fileName) {
             activeModelFileName = fileName
             closeEngine()
         }
     }
+
+    suspend fun selectAndLoadModel(fileName: String) = withContext(Dispatchers.IO) {
+        if (activeModelFileName != fileName || llmInference == null) {
+            activeModelFileName = fileName
+            closeEngine()
+            if (isModelReady()) {
+                initializeInference()
+            }
+        }
+    }
+
+    fun isEngineInitialized(): Boolean = llmInference != null
 
     private fun getModelFile(): File {
         return File(File(context.filesDir, "models"), activeModelFileName)

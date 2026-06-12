@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -130,6 +131,8 @@ fun ChatScreen(
     }
     val isGenerating by viewModel.isGenerating.collectAsState()
     val localModels by viewModel.availableModels.collectAsState()
+    val isModelLoading by viewModel.isModelLoading.collectAsState()
+    val isModelLoaded by viewModel.isModelLoaded.collectAsState()
     
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -151,6 +154,9 @@ fun ChatScreen(
     
     var showModelSelector by remember { mutableStateOf(false) }
     val selectedLlmModelId by viewModel.selectedLlmModelId.collectAsState()
+    val activeLlmModel = remember(localModels, selectedLlmModelId) {
+        localModels.find { it.id == selectedLlmModelId }
+    }
     val availableLlmModels = remember(localModels) {
         localModels.filter { it.type == LocalModelFile.ModelType.LLM }
     }
@@ -1069,6 +1075,54 @@ fun ChatScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
+                    if (activeLlmModel != null && !activeLlmModel.isDownloaded) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = "Peringatan",
+                                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = "Model ${activeLlmModel.name} belum diunduh. Silakan unduh di menu Pengaturan & Model.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    } else if (isModelLoading) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                Text(
+                                    text = "Memuat Model AI ${activeLlmModel?.name ?: ""}...",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
 
                     // Typing Bar Row
                     Row(
@@ -1079,24 +1133,29 @@ fun ChatScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         var showAttachmentMenu by remember { mutableStateOf(false) }
+                        val isInputEnabled = isModelLoaded && !isModelLoading
 
                         TextField(
                             value = textInput,
                             onValueChange = { textInput = it },
+                            enabled = isInputEnabled,
                             placeholder = {
                                 Text(
-                                    "Tanya EduLocal...",
+                                    if (isInputEnabled) "Tanya EduLocal..." else "Model tidak siap",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                                 )
                             },
                             leadingIcon = {
                                 Box {
-                                    IconButton(onClick = { showAttachmentMenu = true }) {
+                                    IconButton(
+                                        onClick = { showAttachmentMenu = true },
+                                        enabled = isInputEnabled
+                                    ) {
                                         Icon(
                                             imageVector = Icons.Default.Add,
                                             contentDescription = "Add Attachment",
-                                            tint = MaterialTheme.colorScheme.primary,
+                                            tint = if (isInputEnabled) MaterialTheme.colorScheme.primary else Color.Gray,
                                             modifier = Modifier.size(22.dp)
                                         )
                                     }
@@ -1136,6 +1195,7 @@ fun ChatScreen(
                             colors = TextFieldDefaults.colors(
                                 focusedContainerColor = MaterialTheme.colorScheme.surface,
                                 unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
                                 focusedIndicatorColor = Color.Transparent,
                                 unfocusedIndicatorColor = Color.Transparent,
                                 disabledIndicatorColor = Color.Transparent
@@ -1162,7 +1222,7 @@ fun ChatScreen(
                         }
 
                         // Send Button
-                        val canSend = textInput.isNotBlank() || attachedUri != null
+                        val canSend = (textInput.isNotBlank() || attachedUri != null) && isInputEnabled
                         IconButton(
                             onClick = {
                                 if (canSend) {
@@ -1255,8 +1315,7 @@ fun ChatBubble(message: ChatMessage) {
                     ),
                     tonalElevation = if (isUser) 1.dp else 3.dp,
                     modifier = Modifier
-                        .widthIn(max = 320.dp)
-                        .fillMaxWidth(0.85f)
+                        .fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         // Display attachment notice inside chat bubble
@@ -1364,6 +1423,6 @@ fun TypingIndicator() {
         Box(modifier = Modifier.size(6.dp * dot2).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
         Box(modifier = Modifier.size(6.dp * dot3).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
         Spacer(modifier = Modifier.width(4.dp))
-        Text("Berpikir offline...", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+        Text("Thinking...", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
     }
 }
