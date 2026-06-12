@@ -166,7 +166,8 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
                         isDownloaded = isDownloaded,
                         downloadUrl = "",
                         localFileName = fileName,
-                        description = obj.optString("description", "Model kustom eksternal.")
+                        description = obj.optString("description", "Model kustom eksternal."),
+                        isResumable = isTempFileExists(fileName)
                     )
                 )
             }
@@ -207,7 +208,19 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
                 isDownloaded = isFileExists("qwen2.5-0.5b-instruct-q8.task", 546660344L),
                 downloadUrl = "https://huggingface.co/litert-community/Qwen2.5-0.5B-Instruct/resolve/main/Qwen2.5-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.task",
                 localFileName = "qwen2.5-0.5b-instruct-q8.task",
-                description = "Model Qwen2.5 0.5B Instruct format .task LiteRT Community yang bebas token dan ringan untuk perangkat Android."
+                description = "Model Qwen2.5 0.5B Instruct format .task LiteRT Community yang bebas token dan ringan untuk perangkat Android.",
+                isResumable = isTempFileExists("qwen2.5-0.5b-instruct-q8.task")
+            ),
+            LocalModelFile(
+                id = "deepseek-r1-qwen-1.5b",
+                name = "DeepSeek-R1 Distill Qwen 1.5B",
+                type = LocalModelFile.ModelType.LLM,
+                sizeBytes = 1650000000L,
+                isDownloaded = isFileExists("deepseek-r1-distill-qwen-1.5b-q8.task", 1650000000L),
+                downloadUrl = "https://huggingface.co/litert-community/DeepSeek-R1-Distill-Qwen-1.5B/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B_multi-prefill-seq_q8_ekv1280.task",
+                localFileName = "deepseek-r1-distill-qwen-1.5b-q8.task",
+                description = "Model penalaran DeepSeek-R1 terdistilasi dari Qwen 1.5B, dioptimalkan untuk performa tinggi pada perangkat mobile menggunakan LiteRT.",
+                isResumable = isTempFileExists("deepseek-r1-distill-qwen-1.5b-q8.task")
             ),
             LocalModelFile(
                 id = "qwen-2.5-1.5b-it",
@@ -217,17 +230,8 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
                 isDownloaded = isFileExists("qwen2.5-1.5b-instruct-q8.task", 1650000000L),
                 downloadUrl = "https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/main/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv1280.task",
                 localFileName = "qwen2.5-1.5b-instruct-q8.task",
-                description = "Model Qwen2.5 1.5B Instruct dengan akurasi tinggi untuk Bahasa Indonesia dan koding."
-            ),
-            LocalModelFile(
-                id = "phi-3.5-mini-it",
-                name = "Phi-3.5 Mini Instruct",
-                type = LocalModelFile.ModelType.LLM,
-                sizeBytes = 2200000000L,
-                isDownloaded = isFileExists("phi3.5-mini-instruct-q8.task", 2200000000L),
-                downloadUrl = "https://huggingface.co/litert-community/Phi-3-mini-4k-instruct/resolve/main/Phi-3-mini-4k-instruct_multi-prefill-seq_q8_ekv1280.task",
-                localFileName = "phi3.5-mini-instruct-q8.task",
-                description = "Model Microsoft Phi 3.5 Mini dengan penalaran logika dan sains kompleks."
+                description = "Model Qwen2.5 1.5B Instruct dengan akurasi tinggi untuk Bahasa Indonesia dan koding.",
+                isResumable = isTempFileExists("qwen2.5-1.5b-instruct-q8.task")
             ),
             LocalModelFile(
                 id = "bge-small-en",
@@ -238,66 +242,6 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
                 downloadUrl = "",
                 localFileName = "bge-small-en-v1.5.onnx",
                 description = "Mekanisme RAG untuk memahami dokumen Anda secara lokal."
-            ),
-            LocalModelFile(
-                id = "stable-diffusion-1.5-mnn-int8",
-                name = "Stable Diffusion 1.5 MNN INT8",
-                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
-                sizeBytes = 2100000000L,
-                isDownloaded = isFileExists("sd15_mnn_int8.bundle", 2100000000L),
-                downloadUrl = "",
-                localFileName = "sd15_mnn_int8.bundle",
-                description = "Paket model SD 1.5 mobile untuk Alibaba MNN CPU/GPU. Tambahkan file bundle manual karena URL publik belum dikonfirmasi."
-            ),
-            LocalModelFile(
-                id = "sdxl-turbo-qnn-mobile",
-                name = "SDXL Turbo Qualcomm QNN",
-                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
-                sizeBytes = 3600000000L,
-                isDownloaded = isFileExists("sdxl_turbo_qnn.bundle", 3600000000L),
-                downloadUrl = "",
-                localFileName = "sdxl_turbo_qnn.bundle",
-                description = "Paket SDXL Turbo mobile untuk Qualcomm QNN SDK. Tambahkan file bundle manual karena URL publik belum dikonfirmasi."
-            ),
-            LocalModelFile(
-                id = "animagine-xl-mini",
-                name = "Animagine XL Mini",
-                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
-                sizeBytes = 2800000000L,
-                isDownloaded = isFileExists("animagine_xl_mini.bundle", 2800000000L),
-                downloadUrl = "",
-                localFileName = "animagine_xl_mini.bundle",
-                description = "Model anime/ilustrasi mini untuk pembuatan sketsa artistik secara lokal."
-            ),
-            LocalModelFile(
-                id = "sd-v1.5-highres",
-                name = "SD v1.5 High-Resolution",
-                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
-                sizeBytes = 4200000000L,
-                isDownloaded = isFileExists("sd_v1.5_highres.bundle", 4200000000L),
-                downloadUrl = "",
-                localFileName = "sd_v1.5_highres.bundle",
-                description = "Model Stable Diffusion resolusi tinggi untuk diagram presisi tinggi dan struktur detail."
-            ),
-            LocalModelFile(
-                id = "mediapipe-vision",
-                name = "MediaPipe Vision Engine",
-                type = LocalModelFile.ModelType.VISION,
-                sizeBytes = 80000000L,
-                isDownloaded = isFileExists("mediapipe_vision.task", 80000000L),
-                downloadUrl = "",
-                localFileName = "mediapipe_vision.task",
-                description = "Model visi komputer lokal untuk kamera, analisis gambar, dan deteksi objek."
-            ),
-            LocalModelFile(
-                id = "moondream2-tiny",
-                name = "Moondream2 Tiny Multimodal",
-                type = LocalModelFile.ModelType.VISION,
-                sizeBytes = 950000000L,
-                isDownloaded = isFileExists("moondream2_tiny.task", 950000000L),
-                downloadUrl = "",
-                localFileName = "moondream2_tiny.task",
-                description = "Model visual chat multimodal mungil untuk menerjemahkan objek gambar ke teks secara offline."
             )
         )
         val customModels = getCustomModels()
@@ -314,6 +258,11 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
             return file.length() >= (expectedSize * 0.95).toLong()
         }
         return file.length() > 0L
+    }
+
+    private fun isTempFileExists(fileName: String): Boolean {
+        val file = File(File(getApplication<Application>().filesDir, "models"), "$fileName.download")
+        return file.exists() && file.length() > 0L
     }
 
     private fun calculateStorage(models: List<LocalModelFile>) {
@@ -341,6 +290,19 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun cancelDownload(modelId: String) {
+        val context = getApplication<Application>().applicationContext
+        val intent = Intent(context, ModelDownloadService::class.java).apply {
+            putExtra("model_id", modelId)
+            putExtra("cancel", true)
+        }
+        try {
+            context.startService(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     fun clearDownloadStatus() {
         ModelDownloadManager.setStatus("")
     }
@@ -350,6 +312,8 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
             val model = _availableModels.value.find { it.id == modelId } ?: return@launch
             val file = File(File(getApplication<Application>().filesDir, "models"), model.localFileName)
             if (file.exists()) file.delete()
+            val tempFile = File(File(getApplication<Application>().filesDir, "models"), "${model.localFileName}.download")
+            if (tempFile.exists()) tempFile.delete()
             
             // Remove custom model metadata from SharedPreferences if it exists
             val prefs = getApplication<Application>().getSharedPreferences("custom_models_prefs", android.content.Context.MODE_PRIVATE)

@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import java.io.File
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
@@ -25,6 +26,7 @@ class ModelDownloadService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
     private val activeDownloads = ConcurrentHashMap<String, Job>()
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
 
     private val channelId = "model_download_channel"
     private val NOTIFICATION_ID = 8888
@@ -32,8 +34,18 @@ class ModelDownloadService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "EduLocal:ModelDownloadWakeLock").apply {
+            acquire()
+        }
+
+        val wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as android.net.wifi.WifiManager
+        wifiLock = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            wifiManager.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "EduLocal:WifiLock")
+        } else {
+            wifiManager.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL, "EduLocal:WifiLock")
+        }.apply {
             acquire()
         }
     }
@@ -42,6 +54,18 @@ class ModelDownloadService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val modelId = intent?.getStringExtra("model_id") ?: return START_NOT_STICKY
+        val cancel = intent.getBooleanExtra("cancel", false)
+        if (cancel) {
+            activeDownloads[modelId]?.cancel()
+            activeDownloads.remove(modelId)
+            ModelDownloadManager.setDownloading(modelId, false)
+            ModelDownloadManager.setStatus("Unduhan dibatalkan.")
+            if (activeDownloads.isEmpty()) {
+                stopSelf()
+            }
+            return START_NOT_STICKY
+        }
+
         val modelName = intent.getStringExtra("model_name") ?: "Model AI"
         val downloadUrl = intent.getStringExtra("download_url") ?: ""
         val fileName = intent.getStringExtra("file_name") ?: ""
@@ -67,55 +91,207 @@ class ModelDownloadService : Service() {
             val modelDir = File(filesDir, "models")
             if (!modelDir.exists()) modelDir.mkdirs()
             val destinationFile = File(modelDir, fileName)
+            val tempFile = File(modelDir, "$fileName.download")
 
-            val result = runCatching {
-                val connection = URL(downloadUrl).openConnection()
-                connection.connect()
-                val totalBytes = connection.contentLengthLong.takeIf { it > 0L } ?: sizeBytes
-                
-                connection.getInputStream().use { input ->
-                    destinationFile.outputStream().use { output ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        var downloadedBytes = 0L
-                        var lastProgressUpdate = 0L
+            var retryCount = 0
+            val maxRetries = 5
+            var downloadResult: Result<Unit>? = null
 
-                        while (true) {
-                            val bytesRead = input.read(buffer)
-                            if (bytesRead <= 0) break
-                            output.write(buffer, 0, bytesRead)
-                            downloadedBytes += bytesRead
+            while (retryCount < maxRetries && this@launch.isActive) {
+                if (retryCount > 0) {
+                    ModelDownloadManager.setStatus("Koneksi terputus. Mencoba kembali ($retryCount/$maxRetries)...")
+                    kotlinx.coroutines.delay(2000L * retryCount)
+                }
 
-                            val now = System.currentTimeMillis()
-                            if (now - lastProgressUpdate > 200) { // Limit updates to 5Hz
-                                lastProgressUpdate = now
-                                val progress = (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
-                                ModelDownloadManager.setProgress(modelId, progress)
+                val runResult = runCatching {
+                    var currentUrl = downloadUrl
+                    var connection = URL(currentUrl).openConnection() as java.net.HttpURLConnection
+                    connection.instanceFollowRedirects = false
+                    connection.connectTimeout = 60000
+                    connection.readTimeout = 60000
+                    connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    
+                    // Add Range header if temp file exists
+                    val existingLength = if (tempFile.exists()) tempFile.length() else 0L
+                    if (existingLength > 0L) {
+                        connection.setRequestProperty("Range", "bytes=$existingLength-")
+                    }
 
-                                val downloadedMb = downloadedBytes / (1024 * 1024)
-                                val totalMb = totalBytes / (1024 * 1024)
-                                val statusText = "Mengunduh $modelName: $downloadedMb/$totalMb MB"
-                                
-                                ModelDownloadManager.setStatus(statusText)
-                                updateProgressNotification("Mengunduh $modelName", progress, "$downloadedMb/$totalMb MB")
+                    connection.connect()
+
+                    var responseCode = connection.responseCode
+                    var redirectCount = 0
+
+                    while ((responseCode == java.net.HttpURLConnection.HTTP_MOVED_TEMP ||
+                            responseCode == java.net.HttpURLConnection.HTTP_MOVED_PERM ||
+                            responseCode == java.net.HttpURLConnection.HTTP_SEE_OTHER ||
+                            responseCode == 307 || responseCode == 308) && redirectCount < 10) {
+                        
+                        var newUrl = connection.getHeaderField("Location") ?: break
+                        connection.disconnect()
+                        
+                        if (!newUrl.startsWith("http://") && !newUrl.startsWith("https://")) {
+                            val base = URL(currentUrl)
+                            newUrl = URL(base, newUrl).toString()
+                        }
+                        
+                        currentUrl = newUrl
+                        connection = URL(currentUrl).openConnection() as java.net.HttpURLConnection
+                        connection.instanceFollowRedirects = false
+                        connection.connectTimeout = 60000
+                        connection.readTimeout = 60000
+                        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        
+                        // Re-apply Range header after redirect
+                        if (existingLength > 0L) {
+                            connection.setRequestProperty("Range", "bytes=$existingLength-")
+                        }
+
+                        connection.connect()
+                        responseCode = connection.responseCode
+                        redirectCount++
+                    }
+
+                    // If 416 (Range Not Satisfiable), delete temp file and request clean download
+                    if (responseCode == 416) {
+                        connection.disconnect()
+                        if (tempFile.exists()) tempFile.delete()
+                        currentUrl = downloadUrl
+                        connection = URL(currentUrl).openConnection() as java.net.HttpURLConnection
+                        connection.instanceFollowRedirects = false
+                        connection.connectTimeout = 60000
+                        connection.readTimeout = 60000
+                        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        connection.connect()
+                        
+                        responseCode = connection.responseCode
+                        redirectCount = 0
+                        while ((responseCode == java.net.HttpURLConnection.HTTP_MOVED_TEMP ||
+                                responseCode == java.net.HttpURLConnection.HTTP_MOVED_PERM ||
+                                responseCode == java.net.HttpURLConnection.HTTP_SEE_OTHER ||
+                                responseCode == 307 || responseCode == 308) && redirectCount < 10) {
+                            var newUrl = connection.getHeaderField("Location") ?: break
+                            connection.disconnect()
+                            if (!newUrl.startsWith("http://") && !newUrl.startsWith("https://")) {
+                                val base = URL(currentUrl)
+                                newUrl = URL(base, newUrl).toString()
                             }
+                            currentUrl = newUrl
+                            connection = URL(currentUrl).openConnection() as java.net.HttpURLConnection
+                            connection.instanceFollowRedirects = false
+                            connection.connectTimeout = 60000
+                            connection.readTimeout = 60000
+                            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                            connection.connect()
+                            responseCode = connection.responseCode
+                            redirectCount++
                         }
                     }
+
+                    if (responseCode != java.net.HttpURLConnection.HTTP_OK && responseCode != 206) {
+                        throw Exception("Server returned HTTP response code: $responseCode untuk URL: $currentUrl")
+                    }
+
+                    val isAppend = responseCode == 206
+                    val bytesToDownload = connection.contentLengthLong
+                    val totalBytes = if (isAppend) {
+                        existingLength + bytesToDownload
+                    } else {
+                        bytesToDownload.takeIf { it > 0L } ?: sizeBytes
+                    }
+
+                    var downloadedBytes = if (isAppend) existingLength else 0L
+
+                    connection.inputStream.use { input ->
+                        java.io.FileOutputStream(tempFile, isAppend).use { output ->
+                            val buffer = ByteArray(1024 * 1024) // 1 MB buffer to avoid JNI/IO bottlenecks
+                            var lastProgressUpdate = 0L
+                            var lastNotificationUpdate = 0L
+
+                            while (true) {
+                                if (!this@launch.isActive) {
+                                    throw kotlinx.coroutines.CancellationException("User cancelled download")
+                                }
+                                val bytesRead = input.read(buffer)
+                                if (bytesRead <= 0) break
+                                output.write(buffer, 0, bytesRead)
+                                downloadedBytes += bytesRead
+
+                                val now = System.currentTimeMillis()
+                                // Update UI state Flow every 500ms to keep it smooth but performant
+                                if (now - lastProgressUpdate > 500) {
+                                    lastProgressUpdate = now
+                                    val progress = (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+                                    ModelDownloadManager.setProgress(modelId, progress)
+
+                                    val downloadedMb = downloadedBytes / (1024 * 1024)
+                                    val totalMb = totalBytes / (1024 * 1024)
+                                    val statusText = "Mengunduh $modelName: $downloadedMb/$totalMb MB"
+                                    ModelDownloadManager.setStatus(statusText)
+                                }
+
+                                // Update system notification every 2000ms to reduce Binder IPC overhead
+                                if (now - lastNotificationUpdate > 2000) {
+                                    lastNotificationUpdate = now
+                                    val progress = (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+                                    val downloadedMb = downloadedBytes / (1024 * 1024)
+                                    val totalMb = totalBytes / (1024 * 1024)
+                                    updateProgressNotification("Mengunduh $modelName", progress, "$downloadedMb/$totalMb MB")
+                                }
+                            }
+
+                            // Send final progress update to UI before completion
+                            val finalProgress = (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+                            ModelDownloadManager.setProgress(modelId, finalProgress)
+                            val finalDownloadedMb = downloadedBytes / (1024 * 1024)
+                            val finalTotalMb = totalBytes / (1024 * 1024)
+                            ModelDownloadManager.setStatus("Mengunduh $modelName: $finalDownloadedMb/$finalTotalMb MB")
+                        }
+                    }
+
+                    // If complete, rename temp file to target destination file
+                    if (downloadedBytes >= (totalBytes * 0.98).toLong()) {
+                        if (destinationFile.exists()) destinationFile.delete()
+                        if (!tempFile.renameTo(destinationFile)) {
+                            throw Exception("Gagal menyelesaikan file model (rename failed)")
+                        }
+                    } else {
+                        throw Exception("Unduhan terputus sebelum selesai.")
+                    }
+                }
+
+                downloadResult = runResult
+                if (runResult.isSuccess) {
+                    break
+                } else {
+                    val ex = runResult.exceptionOrNull()
+                    if (ex is kotlinx.coroutines.CancellationException) {
+                        break
+                    }
+                    retryCount++
                 }
             }
 
             activeDownloads.remove(modelId)
             ModelDownloadManager.setDownloading(modelId, false)
 
-            result.onSuccess {
+            val finalResult = downloadResult ?: Result.failure(Exception("Unknown download error"))
+
+            finalResult.onSuccess {
                 ModelDownloadManager.setStatus("$modelName siap digunakan.")
                 showFinishedNotification("Unduhan Berhasil", "${modelName} telah selesai diunduh.")
             }.onFailure { e ->
-                // Delete partial file on failure to prevent corrupt model
-                if (destinationFile.exists()) {
-                    destinationFile.delete()
+                // Do NOT delete the tempFile on timeout/failure so it can be resumed.
+                // Only delete it if the user cancelled the download explicitly.
+                if (e is kotlinx.coroutines.CancellationException) {
+                    if (tempFile.exists()) {
+                        tempFile.delete()
+                    }
+                    ModelDownloadManager.setStatus("Unduhan $modelName dibatalkan.")
+                } else {
+                    ModelDownloadManager.setStatus("Gagal mengunduh $modelName: ${e.localizedMessage ?: "koneksi terputus"}")
+                    showFinishedNotification("Unduhan Gagal", "Gagal mengunduh $modelName")
                 }
-                ModelDownloadManager.setStatus("Gagal mengunduh $modelName: ${e.localizedMessage ?: "koneksi terputus"}")
-                showFinishedNotification("Unduhan Gagal", "Gagal mengunduh $modelName")
             }
 
             // Stop service if no active downloads left
@@ -221,6 +397,9 @@ class ModelDownloadService : Service() {
         super.onDestroy()
         if (wakeLock?.isHeld == true) {
             wakeLock?.release()
+        }
+        if (wifiLock?.isHeld == true) {
+            wifiLock?.release()
         }
         serviceJob.cancel()
     }

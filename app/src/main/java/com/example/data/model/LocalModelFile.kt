@@ -8,7 +8,8 @@ data class LocalModelFile(
     val isDownloaded: Boolean,
     val downloadUrl: String,
     val localFileName: String,
-    val description: String
+    val description: String,
+    val isResumable: Boolean = false
 ) {
     enum class ModelType {
         LLM, VISION, EMBEDDING, STABLE_DIFFUSION

@@ -683,14 +683,48 @@ fun ModelManagementScreen(
             }
 
             // Model item cards list
-            items(filteredModels) { model ->
-                ModelItemCard(
-                    model = model,
-                    isDownloading = downloadingModelIds.contains(model.id),
-                    downloadProgress = modelDownloadProgress[model.id] ?: 0f,
-                    onDownloadClick = { requestNotificationPermissionAndDownload(model.id) },
-                    onDeleteClick = { viewModel.deleteModel(model.id) }
-                )
+            if (filteredModels.isEmpty()) {
+                item {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 48.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Inbox,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                            modifier = Modifier.size(56.dp)
+                        )
+                        Text(
+                            text = "Tidak Ada Model Bawaan",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Silakan impor berkas model kustom Anda sendiri (.task atau .bundle) dari penyimpanan perangkat menggunakan tombol '+' di kanan atas.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 32.dp),
+                            lineHeight = 20.sp
+                        )
+                    }
+                }
+            } else {
+                items(filteredModels) { model ->
+                    ModelItemCard(
+                        model = model,
+                        isDownloading = downloadingModelIds.contains(model.id),
+                        downloadProgress = modelDownloadProgress[model.id] ?: 0f,
+                        onDownloadClick = { requestNotificationPermissionAndDownload(model.id) },
+                        onDeleteClick = { viewModel.deleteModel(model.id) },
+                        onCancelClick = { viewModel.cancelDownload(model.id) }
+                    )
+                }
             }
 
             item {
@@ -864,7 +898,8 @@ fun ModelItemCard(
     isDownloading: Boolean,
     downloadProgress: Float,
     onDownloadClick: () -> Unit,
-    onDeleteClick: () -> Unit
+    onDeleteClick: () -> Unit,
+    onCancelClick: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val isSnapdragon = remember {
@@ -1026,8 +1061,11 @@ fun ModelItemCard(
             // Description of model usage (💡 Recommendation banner)
             val recommendationText = when (model.id) {
                 "qwen-2.5-0.5b-it-q8" -> "💡 Kebutuhan: Asisten Chat Lokal Free Mobile"
+                "deepseek-r1-qwen-1.5b" -> "🧠 Kebutuhan: Penalaran Logis Lokal, Matematika, dan Koding"
                 "qwen-2.5-1.5b-it" -> "🇮🇩 Kebutuhan: Akurasi Tinggi Bahasa Indonesia & Koding"
                 "phi-3.5-mini-it" -> "🧠 Kebutuhan: Penalaran Logika & Sains Kompleks"
+                "granite-3.0-1b-a400m-instruct-q8" -> "⚡ Kebutuhan: Model MoE Ultra Ringan, Respon Cepat & Hemat Baterai"
+                "granite-3.0-3b-a800m-instruct-q8" -> "🧠 Kebutuhan: Model MoE Efisien dengan Penalaran & Koding Seimbang"
                 "bge-small-en" -> "⚡ Kebutuhan: Database RAG & Unggah Dokumen"
                 "mediapipe-vision" -> "📷 Kebutuhan: Analisa Kamera, Gambar & Diagram"
                 "moondream2-tiny" -> "🖼️ Kebutuhan: Analisa Gambar Multimodal & Visual Chat"
@@ -1041,6 +1079,7 @@ fun ModelItemCard(
             val (compatibilityText, compatibilityBgColor, compatibilityTextColor) = remember(model.id, isSnapdragon, isLowMemory) {
                 when (model.id) {
                     "qwen-2.5-0.5b-it-q8" -> Triple("✅ Sangat Lancar (Rekomendasi Utama RAM 8GB)", Color(0xFFE8F5E9), Color(0xFF2E7D32))
+                    "deepseek-r1-qwen-1.5b" -> Triple("✅ Sangat Lancar (Rekomendasi Utama Penalaran)", Color(0xFFE8F5E9), Color(0xFF2E7D32))
                     "qwen-2.5-1.5b-it" -> Triple("✅ Berjalan Baik (Akurasi Tinggi & Koding)", Color(0xFFE8F5E9), Color(0xFF2E7D32))
                     "phi-3.5-mini-it" -> if (isLowMemory) {
                         Triple("⚠️ RAM 8GB Agak Berat (Bisa Menyebabkan Lag)", Color(0xFFFFF3E0), Color(0xFFE65100))
@@ -1056,6 +1095,8 @@ fun ModelItemCard(
                     } else {
                         Triple("❌ Tidak Kompatibel (Hanya untuk Chipset Snapdragon)", Color(0xFFFFEBEE), Color(0xFFC62828))
                     }
+                    "granite-3.0-1b-a400m-instruct-q8" -> Triple("✅ Ultra Ringan & Sangat Lancar (Hemat RAM)", Color(0xFFE8F5E9), Color(0xFF2E7D32))
+                    "granite-3.0-3b-a800m-instruct-q8" -> Triple("✅ Berjalan Baik & Hemat Daya (800M Aktif)", Color(0xFFE8F5E9), Color(0xFF2E7D32))
                     "animagine-xl-mini" -> if (isLowMemory) {
                         Triple("⚠️ Kurang Disarankan (Resiko Crash / Memori Penuh)", Color(0xFFFFEBEE), Color(0xFFC62828))
                     } else {
@@ -1112,7 +1153,7 @@ fun ModelItemCard(
 
             // Progress bar if downloading
             if (isDownloading) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     LinearProgressIndicator(
                         progress = { downloadProgress.coerceIn(0f, 1f) },
                         modifier = Modifier
@@ -1127,18 +1168,36 @@ fun ModelItemCard(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Mengunduh...",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            text = "${(downloadProgress * 100).toInt().coerceIn(0, 100)}%",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Column {
+                            Text(
+                                text = "Mengunduh...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "${(downloadProgress * 100).toInt().coerceIn(0, 100)}%",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Button(
+                            onClick = onCancelClick,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f),
+                                contentColor = MaterialTheme.colorScheme.error
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                            modifier = Modifier.height(36.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Batal", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Batal", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             } else {
@@ -1152,7 +1211,8 @@ fun ModelItemCard(
                         isDownloading = isDownloading,
                         isSnapdragon = isSnapdragon,
                         onDownloadClick = onDownloadClick,
-                        onDeleteClick = onDeleteClick
+                        onDeleteClick = onDeleteClick,
+                        onCancelClick = onCancelClick
                     )
                 }
             }
@@ -1166,27 +1226,10 @@ fun ModelActionButton(
     isDownloading: Boolean,
     isSnapdragon: Boolean,
     onDownloadClick: () -> Unit,
-    onDeleteClick: () -> Unit
+    onDeleteClick: () -> Unit,
+    onCancelClick: () -> Unit
 ) {
-    val isSupported = model.id != "sdxl-turbo-qnn-mobile" || isSnapdragon
-
-    if (!isSupported && !model.isDownloaded) {
-        Button(
-            onClick = {},
-            enabled = false,
-            shape = RoundedCornerShape(10.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                contentColor = Color.Gray
-            ),
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-            modifier = Modifier.height(36.dp)
-        ) {
-            Icon(Icons.Default.Close, contentDescription = "Tidak Didukung", modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(6.dp))
-            Text("Tidak Didukung", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        }
-    } else if (model.isDownloaded) {
+    if (model.isDownloaded) {
         Button(
             onClick = onDeleteClick,
             colors = ButtonDefaults.buttonColors(
@@ -1203,34 +1246,95 @@ fun ModelActionButton(
         }
     } else if (isDownloading) {
         Button(
-            onClick = {},
-            enabled = false,
+            onClick = onCancelClick,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f),
+                contentColor = MaterialTheme.colorScheme.error
+            ),
             shape = RoundedCornerShape(10.dp),
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
             modifier = Modifier.height(36.dp)
         ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(14.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            Icon(Icons.Default.Close, contentDescription = "Batal", modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Mengunduh...", fontSize = 12.sp)
+            Text("Batal", fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
-    } else {
+    } else if (model.downloadUrl.isBlank()) {
+        val context = androidx.compose.ui.platform.LocalContext.current
         Button(
-            onClick = onDownloadClick,
+            onClick = {
+                android.widget.Toast.makeText(
+                    context,
+                    "Model ini belum memiliki URL unduhan publik. Silakan impor file .task/.bundle secara manual menggunakan tombol '+' di kanan atas.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            },
             shape = RoundedCornerShape(10.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
             ),
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
             modifier = Modifier.height(36.dp)
         ) {
-            Icon(Icons.Default.CloudDownload, contentDescription = "Unduh", modifier = Modifier.size(16.dp))
+            Icon(Icons.Default.Add, contentDescription = "Impor", modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Unduh", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("Impor Manual", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+    } else {
+        if (model.isResumable) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = onDeleteClick,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(
+                        width = 1.dp,
+                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
+                    ),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                    modifier = Modifier.height(36.dp)
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = "Hapus", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Hapus", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Button(
+                    onClick = onDownloadClick,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondary,
+                        contentColor = MaterialTheme.colorScheme.onSecondary
+                    ),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                    modifier = Modifier.height(36.dp)
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = "Lanjutkan", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Lanjutkan", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        } else {
+            Button(
+                onClick = onDownloadClick,
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                modifier = Modifier.height(36.dp)
+            ) {
+                Icon(Icons.Default.CloudDownload, contentDescription = "Unduh", modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Unduh", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
