@@ -13,6 +13,7 @@
 /captures
 .externalNativeBuild
 .cxx
+post.txt
 local.properties
 .env
 debug.keystore
