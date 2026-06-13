@@ -12,7 +12,7 @@ data class LocalModelFile(
     val isResumable: Boolean = false
 ) {
     enum class ModelType {
-        LLM, VISION, EMBEDDING, STABLE_DIFFUSION
+        LLM, VISION, EMBEDDING, STABLE_DIFFUSION, LORA
     }
 
     val displaySize: String

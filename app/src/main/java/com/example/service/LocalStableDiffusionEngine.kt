@@ -6,6 +6,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import java.io.File
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * Handles On-device Stable Diffusion and Local Image Generation.
@@ -51,6 +53,23 @@ class LocalStableDiffusionEngine(private val context: Context) {
         backendName: String = "GPU Vulkan Acceleration"
     ): Bitmap {
         val modelBundle = resolveModelBundle(modelId)
+        val nativeDir = context.applicationInfo.nativeLibraryDir
+        val executableFile = File(nativeDir, "libstable_diffusion_core.so")
+
+        if (modelBundle != null && executableFile.exists()) {
+            startBackendProcess(modelBundle, modelId)
+            val nativeBitmap = callGenerateApi(
+                prompt = prompt,
+                negativePrompt = negativePrompt,
+                width = widthForAspectRatio(aspectRatio),
+                height = heightForAspectRatio(aspectRatio),
+                cfgScale = cfgScale,
+                steps = steps,
+                seed = seed
+            )
+            if (nativeBitmap != null) return nativeBitmap
+        }
+
         if (modelBundle != null && nativeRuntimeAvailable) {
             val nativeBitmap = runCatching {
                 generateNativeImage(
@@ -416,13 +435,209 @@ class LocalStableDiffusionEngine(private val context: Context) {
         return bitmap
     }
 
+    private fun isBackendRunning(): Boolean {
+        return try {
+            java.net.Socket("localhost", 8081).use { true }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun startBackendProcess(modelBundle: File, modelId: String) {
+        if (isBackendRunning()) return
+
+        val nativeDir = context.applicationInfo.nativeLibraryDir
+        val executableFile = File(nativeDir, "libstable_diffusion_core.so")
+        if (!executableFile.exists()) return
+
+        val runtimeDir = File(context.filesDir, "runtime_libs")
+        if (!runtimeDir.exists()) {
+            runtimeDir.mkdirs()
+        }
+
+        val modelDir = if (modelBundle.isDirectory) modelBundle else modelBundle.parentFile ?: modelsDir
+
+        val clipFile = File(modelDir, "clip.bin").let { if (it.exists()) it else File(modelDir, "clip.mnn") }
+        val unetFile = File(modelDir, "unet.bin").let { if (it.exists()) it else File(modelDir, "unet.mnn") }
+        val vaeFile = File(modelDir, "vae_decoder.bin").let { if (it.exists()) it else File(modelDir, "vae_decoder.mnn") }
+        val tokenizerFile = File(modelDir, "tokenizer.json")
+
+        val runOnCpu = unetFile.name.endsWith(".mnn")
+
+        val command = if (runOnCpu) {
+            listOf(
+                executableFile.absolutePath,
+                "--clip", clipFile.absolutePath,
+                "--unet", unetFile.absolutePath,
+                "--vae_decoder", vaeFile.absolutePath,
+                "--tokenizer", tokenizerFile.absolutePath,
+                "--port", "8081",
+                "--text_embedding_size", if (modelId.contains("sd21")) "1024" else "768",
+                "--cpu"
+            )
+        } else {
+            listOf(
+                executableFile.absolutePath,
+                "--clip", clipFile.absolutePath,
+                "--unet", unetFile.absolutePath,
+                "--vae_decoder", vaeFile.absolutePath,
+                "--tokenizer", tokenizerFile.absolutePath,
+                "--backend", File(runtimeDir, "libQnnHtp.so").absolutePath,
+                "--system_library", File(runtimeDir, "libQnnSystem.so").absolutePath,
+                "--port", "8081",
+                "--text_embedding_size", "768"
+            )
+        }
+
+        try {
+            val env = mutableMapOf<String, String>()
+            val systemLibPaths = mutableListOf(
+                runtimeDir.absolutePath,
+                "/system/lib64",
+                "/vendor/lib64",
+                "/vendor/lib64/egl"
+            )
+            try {
+                val maliSymlink = File("/system/vendor/lib64/egl/libGLES_mali.so")
+                if (maliSymlink.exists()) {
+                    val realPath = maliSymlink.canonicalPath
+                    val soc = realPath.split("/").getOrNull(realPath.split("/").size - 2)
+                    if (soc != null) {
+                        systemLibPaths.add("/vendor/lib64/$soc")
+                        systemLibPaths.add("/vendor/lib64/egl/$soc")
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignored
+            }
+
+            env["LD_LIBRARY_PATH"] = systemLibPaths.joinToString(":")
+            env["DSP_LIBRARY_PATH"] = runtimeDir.absolutePath
+
+            val processBuilder = ProcessBuilder(command).apply {
+                directory(File(nativeDir))
+                redirectErrorStream(true)
+                environment().putAll(env)
+            }
+
+            val proc = processBuilder.start()
+
+            Thread {
+                try {
+                    proc.inputStream.bufferedReader().use { reader ->
+                        var line: String?
+                        while (reader.readLine().also { line = it } != null) {
+                            android.util.Log.i("SDNativeBackend", "stdout: $line")
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Ignored
+                }
+            }.apply {
+                isDaemon = true
+                start()
+            }
+
+            var attempts = 0
+            while (!isBackendRunning() && attempts < 25) {
+                Thread.sleep(200)
+                attempts++
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private suspend fun callGenerateApi(
+        prompt: String,
+        negativePrompt: String,
+        width: Int,
+        height: Int,
+        cfgScale: Float,
+        steps: Int,
+        seed: Long
+    ): Bitmap? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val jsonObject = org.json.JSONObject().apply {
+            put("prompt", prompt)
+            put("negative_prompt", negativePrompt)
+            put("steps", steps)
+            put("cfg", cfgScale)
+            put("use_cfg", true)
+            put("width", width)
+            put("height", height)
+            put("scheduler", "dpm")
+            put("seed", seed)
+        }
+
+        val client = okhttp3.OkHttpClient.Builder()
+            .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(10, java.util.concurrent.TimeUnit.MINUTES)
+            .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+
+        val request = okhttp3.Request.Builder()
+            .url("http://localhost:8081/generate")
+            .post(jsonObject.toString().toRequestBody("application/json".toMediaTypeOrNull()))
+            .build()
+
+        var resultBitmap: Bitmap? = null
+
+        try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val body = response.body ?: return@withContext null
+                body.byteStream().bufferedReader().use { reader ->
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        val trimmed = line!!.trim()
+                        if (trimmed.startsWith("data: ")) {
+                            val data = trimmed.substring(6).trim()
+                            if (data == "[DONE]") break
+                            val msg = org.json.JSONObject(data)
+                            if (msg.optString("type") == "complete") {
+                                val b64Img = msg.optString("image")
+                                if (b64Img.isNotEmpty()) {
+                                    val resultWidth = msg.optInt("width", width)
+                                    val resultHeight = msg.optInt("height", height)
+                                    val imageBytes = android.util.Base64.decode(b64Img, android.util.Base64.DEFAULT)
+
+                                    val pixels = IntArray(resultWidth * resultHeight)
+                                    for (i in 0 until resultWidth * resultHeight) {
+                                        val index = i * 3
+                                        if (index + 2 < imageBytes.size) {
+                                            val r = imageBytes[index].toInt() and 0xFF
+                                            val g = imageBytes[index + 1].toInt() and 0xFF
+                                            val b = imageBytes[index + 2].toInt() and 0xFF
+                                            pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                                        }
+                                    }
+                                    val bmp = Bitmap.createBitmap(resultWidth, resultHeight, Bitmap.Config.ARGB_8888)
+                                    bmp.setPixels(pixels, 0, resultWidth, 0, 0, resultWidth, resultHeight)
+                                    resultBitmap = bmp
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        resultBitmap
+    }
+
     private fun resolveModelBundle(modelId: String): File? {
+        val directFile = File(modelsDir, modelId)
+        if (directFile.exists()) return directFile
+
         val fileName = when (modelId) {
             "stable-diffusion-1.5-mnn-int8", "stable-diffusion-int4" -> "sd15_mnn_int8.bundle"
             "sdxl-turbo-qnn-mobile", "sdxl-turbo-mobile-lcm" -> "sdxl_turbo_qnn.bundle"
             "animagine-xl-mini" -> "animagine_xl_mini.bundle"
             "sd-v1.5-highres" -> "sd_v1.5_highres.bundle"
-            else -> null
+            "stable-diffusion-1.5-onnx-int8" -> "sd15_onnx_int8.onnx"
+            else -> if (modelId.endsWith(".onnx")) modelId else null
         }
         return fileName?.let { File(modelsDir, it) }?.takeIf { it.exists() }
     }

@@ -844,6 +844,18 @@ fun ModelManagementScreen(
                                     )
                                 }
                             }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                FilterChip(
+                                    selected = importModelType == LocalModelFile.ModelType.LORA,
+                                    onClick = { importModelType = LocalModelFile.ModelType.LORA },
+                                    label = { Text("LoRA (Gaya Gambar)") },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
                         }
                     }
                 },
@@ -930,6 +942,7 @@ fun ModelItemCard(
         LocalModelFile.ModelType.STABLE_DIFFUSION -> Icons.Default.Palette
         LocalModelFile.ModelType.VISION -> Icons.Default.AutoAwesome
         LocalModelFile.ModelType.EMBEDDING -> Icons.Default.Book
+        LocalModelFile.ModelType.LORA -> Icons.Default.AutoAwesome
     }
     
     val iconContainerColor = when (model.type) {
@@ -937,6 +950,7 @@ fun ModelItemCard(
         LocalModelFile.ModelType.STABLE_DIFFUSION -> Color(0xFFFCE4EC)
         LocalModelFile.ModelType.VISION -> Color(0xFFE8EAF6)
         LocalModelFile.ModelType.EMBEDDING -> Color(0xFFE8F5E9)
+        LocalModelFile.ModelType.LORA -> Color(0xFFFFF3E0)
     }
     
     val iconColor = when (model.type) {
@@ -944,6 +958,7 @@ fun ModelItemCard(
         LocalModelFile.ModelType.STABLE_DIFFUSION -> Color(0xFFD81B60)
         LocalModelFile.ModelType.VISION -> Color(0xFF3F51B5)
         LocalModelFile.ModelType.EMBEDDING -> Color(0xFF2E7D32)
+        LocalModelFile.ModelType.LORA -> Color(0xFFFF9800)
     }
 
     Card(
@@ -1050,6 +1065,7 @@ fun ModelItemCard(
                                 LocalModelFile.ModelType.STABLE_DIFFUSION -> "Generator Gambar"
                                 LocalModelFile.ModelType.VISION -> "Analisa Visual"
                                 LocalModelFile.ModelType.EMBEDDING -> "Database RAG"
+                                LocalModelFile.ModelType.LORA -> "Style/Tekstur LoRA"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = Color.Gray
@@ -1073,6 +1089,8 @@ fun ModelItemCard(
                 "sdxl-turbo-qnn-mobile" -> "⚡ Kebutuhan: Model manual QNN Snapdragon"
                 "animagine-xl-mini" -> "🌸 Kebutuhan: Ink/Anime Studio & Lukisan Ilustrasi"
                 "sd-v1.5-highres" -> "🔍 Kebutuhan: Gambar Presisi Tinggi & Struktur Detail"
+                "stable-diffusion-1.5-onnx-int8" -> "🎨 Kebutuhan: Model ONNX INT8 Mobile SD 1.5"
+                "lora-detail-tweaker" -> "💡 Kebutuhan: Modifikasi gaya sketsa sains / detail"
                 else -> "⚡ Kebutuhan: Asisten EduLocal"
             }
 
@@ -1107,6 +1125,12 @@ fun ModelItemCard(
                     } else {
                         Triple("✅ Berjalan Baik", Color(0xFFE8F5E9), Color(0xFF2E7D32))
                     }
+                    "stable-diffusion-1.5-onnx-int8" -> if (isLowMemory) {
+                        Triple("⚠️ RAM 8GB Sedikit Lambat (Saran Gunakan GPU)", Color(0xFFFFF3E0), Color(0xFFE65100))
+                    } else {
+                        Triple("✅ Sangat Lancar (ONNX CPU/GPU SD 1.5)", Color(0xFFE8F5E9), Color(0xFF2E7D32))
+                    }
+                    "lora-detail-tweaker" -> Triple("✅ Sangat Ringan (Kompatibel Semua HP)", Color(0xFFE8F5E9), Color(0xFF2E7D32))
                     else -> Triple("✅ Kompatibel", Color(0xFFE8F5E9), Color(0xFF2E7D32))
                 }
             }

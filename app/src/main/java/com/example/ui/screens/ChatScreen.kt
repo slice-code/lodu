@@ -32,11 +32,13 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -1346,10 +1348,21 @@ fun ChatBubble(message: ChatMessage) {
                                 color = MaterialTheme.colorScheme.onPrimary
                             )
                         } else {
-                            MarkdownText(
-                                text = message.text,
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                            val parsed = remember(message.text) { parseThinking(message.text) }
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (parsed.thinkingText != null) {
+                                    ThinkingProcessContainer(
+                                        thinkingText = parsed.thinkingText,
+                                        isClosed = parsed.isThinkingClosed
+                                    )
+                                }
+                                if (parsed.remainingText.isNotEmpty() || parsed.thinkingText == null) {
+                                    MarkdownText(
+                                        text = if (parsed.remainingText.isEmpty() && parsed.thinkingText == null) message.text else parsed.remainingText,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -1426,3 +1439,121 @@ fun TypingIndicator() {
         Text("Thinking...", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
     }
 }
+
+data class ParsedMessage(
+    val thinkingText: String?,
+    val isThinkingClosed: Boolean,
+    val remainingText: String
+)
+
+fun parseThinking(text: String): ParsedMessage {
+    val thinkStart = text.indexOf("<think>")
+    if (thinkStart == -1) {
+        return ParsedMessage(null, false, text)
+    }
+    
+    val beforeThink = text.substring(0, thinkStart)
+    val contentStart = thinkStart + 7 // "<think>".length
+    val thinkEnd = text.indexOf("</think>", contentStart)
+    
+    return if (thinkEnd == -1) {
+        val thinking = text.substring(contentStart)
+        ParsedMessage(thinking, false, beforeThink)
+    } else {
+        val thinking = text.substring(contentStart, thinkEnd)
+        val remaining = beforeThink + text.substring(thinkEnd + 8) // "</think>".length
+        ParsedMessage(thinking, true, remaining)
+    }
+}
+
+@Composable
+fun ThinkingProcessContainer(
+    thinkingText: String,
+    isClosed: Boolean
+) {
+    var isExpanded by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(8.dp)
+            )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = isClosed) { isExpanded = !isExpanded }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = "Thinking Process",
+                    tint = if (isClosed) Color.Gray else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = if (isClosed) "Proses Berpikir" else "Sedang Berpikir...",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isClosed) Color.Gray else MaterialTheme.colorScheme.primary
+                )
+            }
+            if (isClosed) {
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (isExpanded) "Sembunyikan" else "Tampilkan",
+                    tint = Color.Gray,
+                    modifier = Modifier.size(16.dp)
+                )
+            } else {
+                val infiniteTransition = rememberInfiniteTransition(label = "thinkingPulse")
+                val alpha by infiniteTransition.animateFloat(
+                    initialValue = 0.3f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(800, easing = LinearEasing),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "alpha"
+                )
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = alpha))
+                )
+            }
+        }
+
+        if (isClosed && isExpanded) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.Black.copy(alpha = 0.05f))
+                    .padding(8.dp)
+            ) {
+                Text(
+                    text = thinkingText.trim(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                    fontStyle = FontStyle.Italic
+                )
+            }
+        }
+    }
+}
+

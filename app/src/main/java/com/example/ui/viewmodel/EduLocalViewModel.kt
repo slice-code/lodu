@@ -266,7 +266,7 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
                 type = LocalModelFile.ModelType.STABLE_DIFFUSION,
                 sizeBytes = 860000000L,
                 isDownloaded = isFileExists("sd15_mnn_int8.bundle", 860000000L),
-                downloadUrl = "https://huggingface.co/litert-community/stable-diffusion-1.5-mnn/resolve/main/sd15_mnn_int8.bundle",
+                downloadUrl = "",
                 localFileName = "sd15_mnn_int8.bundle",
                 description = "Model Stable Diffusion 1.5 dioptimalkan untuk GPU ponsel menggunakan runtime MNN INT8.",
                 isResumable = isTempFileExists("sd15_mnn_int8.bundle")
@@ -277,7 +277,7 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
                 type = LocalModelFile.ModelType.STABLE_DIFFUSION,
                 sizeBytes = 1650000000L,
                 isDownloaded = isFileExists("sdxl_turbo_qnn.bundle", 1650000000L),
-                downloadUrl = "https://huggingface.co/litert-community/sdxl-turbo-qnn/resolve/main/sdxl_turbo_qnn.bundle",
+                downloadUrl = "",
                 localFileName = "sdxl_turbo_qnn.bundle",
                 description = "Model SDXL Turbo cepat dioptimalkan untuk Qualcomm NPU Snapdragon.",
                 isResumable = isTempFileExists("sdxl_turbo_qnn.bundle")
@@ -288,7 +288,7 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
                 type = LocalModelFile.ModelType.STABLE_DIFFUSION,
                 sizeBytes = 1450000000L,
                 isDownloaded = isFileExists("animagine_xl_mini.bundle", 1450000000L),
-                downloadUrl = "https://huggingface.co/litert-community/animagine-xl-mnn/resolve/main/animagine_xl_mini.bundle",
+                downloadUrl = "",
                 localFileName = "animagine_xl_mini.bundle",
                 description = "Model visual anime/manga offline berkualitas tinggi untuk ilustrasi kreatif Anda.",
                 isResumable = isTempFileExists("animagine_xl_mini.bundle")
@@ -299,10 +299,32 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
                 type = LocalModelFile.ModelType.STABLE_DIFFUSION,
                 sizeBytes = 1950000000L,
                 isDownloaded = isFileExists("sd_v1.5_highres.bundle", 1950000000L),
-                downloadUrl = "https://huggingface.co/litert-community/stable-diffusion-v1.5-highres/resolve/main/sd_v1.5_highres.bundle",
+                downloadUrl = "",
                 localFileName = "sd_v1.5_highres.bundle",
                 description = "Model gambar presisi tinggi dengan detail tajam untuk diagram sains.",
                 isResumable = isTempFileExists("sd_v1.5_highres.bundle")
+            ),
+            LocalModelFile(
+                id = "stable-diffusion-1.5-onnx-int8",
+                name = "Stable Diffusion 1.5 ONNX INT8",
+                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
+                sizeBytes = 860000000L,
+                isDownloaded = isFileExists("sd15_onnx_int8.onnx", 860000000L),
+                downloadUrl = "https://huggingface.co/onnx-community/stable-diffusion-v1-5-ONNX/resolve/main/unet/model.onnx",
+                localFileName = "sd15_onnx_int8.onnx",
+                description = "Model U-Net dari Stable Diffusion 1.5, dioptimalkan menggunakan ONNX Runtime dan dikuantisasi ke INT8 (8-bit) untuk kompilasi silang CPU/GPU perangkat mobile.",
+                isResumable = isTempFileExists("sd15_onnx_int8.onnx")
+            ),
+            LocalModelFile(
+                id = "lora-detail-tweaker",
+                name = "Detail Tweaker LoRA (v1.5)",
+                type = LocalModelFile.ModelType.LORA,
+                sizeBytes = 37861176L,
+                isDownloaded = isFileExists("detail_tweaker.safetensors", 37861176L),
+                downloadUrl = "https://huggingface.co/ffxvs/lora-effects/resolve/main/detail_tweaker.safetensors",
+                localFileName = "detail_tweaker.safetensors",
+                description = "Model LoRA (Low-Rank Adaptation) detail tweaker untuk meningkatkan detail visual sketsa sains atau diagram dengan presisi tinggi.",
+                isResumable = isTempFileExists("detail_tweaker.safetensors")
             ),
             LocalModelFile(
                 id = "bge-small-en",
