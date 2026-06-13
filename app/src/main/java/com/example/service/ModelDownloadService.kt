@@ -95,7 +95,7 @@ class ModelDownloadService : Service() {
 
             var retryCount = 0
             val maxRetries = 5
-            var downloadResult: Result<Unit>? = null
+            var downloadResult: Result<Unit?>? = null
 
             while (retryCount < maxRetries && this@launch.isActive) {
                 if (retryCount > 0) {
@@ -249,11 +249,40 @@ class ModelDownloadService : Service() {
                         }
                     }
 
-                    // If complete, rename temp file to target destination file
-                    if (downloadedBytes >= (totalBytes * 0.98).toLong()) {
-                        if (destinationFile.exists()) destinationFile.delete()
-                        if (!tempFile.renameTo(destinationFile)) {
-                            throw Exception("Gagal menyelesaikan file model (rename failed)")
+                    // If complete, rename temp file to target destination file or extract if it's a zip
+                    if (downloadedBytes >= (totalBytes * 0.95).toLong()) {
+                        if (fileName.endsWith(".zip")) {
+                            ModelDownloadManager.setStatus("Mengekstrak model...")
+                            updateProgressNotification("Mengekstrak $modelName", 0.5f, "Ekstraksi...")
+
+                            val finalModelDir = File(modelDir, modelId)
+                            if (finalModelDir.exists()) {
+                                finalModelDir.deleteRecursively()
+                            }
+                            finalModelDir.mkdirs()
+
+                            val extractTempDir = File(modelDir, "${modelId}_extract")
+                            if (extractTempDir.exists()) {
+                                extractTempDir.deleteRecursively()
+                            }
+                            extractTempDir.mkdirs()
+
+                            try {
+                                unzipFile(tempFile, extractTempDir)
+                                extractTempDir.listFiles()?.forEach { file ->
+                                    file.renameTo(File(finalModelDir, file.name))
+                                }
+                            } finally {
+                                extractTempDir.deleteRecursively()
+                                if (tempFile.exists()) {
+                                    tempFile.delete()
+                                }
+                            }
+                        } else {
+                            if (destinationFile.exists()) destinationFile.delete()
+                            if (!tempFile.renameTo(destinationFile)) {
+                                throw Exception("Gagal menyelesaikan file model (rename failed)")
+                            }
                         }
                     } else {
                         throw Exception("Unduhan terputus sebelum selesai.")
@@ -390,6 +419,25 @@ class ModelDownloadService : Service() {
             }
             val notificationManager = getSystemService(NotificationManager::class.java)
             notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    private suspend fun unzipFile(zipFile: File, destDir: File) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        java.util.zip.ZipInputStream(zipFile.inputStream().buffered()).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                if (!entry.isDirectory) {
+                    val fileName = entry.name.substringAfterLast('/')
+                    if (fileName.isNotEmpty() && !fileName.startsWith(".") && !fileName.startsWith("__MACOSX")) {
+                        val file = File(destDir, fileName)
+                        java.io.FileOutputStream(file).buffered().use { output ->
+                            zis.copyTo(output)
+                        }
+                    }
+                }
+                zis.closeEntry()
+                entry = zis.nextEntry
+            }
         }
     }
 

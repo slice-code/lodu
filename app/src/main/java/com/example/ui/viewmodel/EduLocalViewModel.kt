@@ -261,48 +261,48 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
                 isResumable = isTempFileExists("qwen2.5-1.5b-instruct-q8.task")
             ),
             LocalModelFile(
-                id = "stable-diffusion-1.5-mnn-int8",
-                name = "Stable Diffusion 1.5 MNN INT8",
+                id = "anythingv5cpu",
+                name = "Anything V5.0 (Anime CPU/GPU)",
                 type = LocalModelFile.ModelType.STABLE_DIFFUSION,
-                sizeBytes = 860000000L,
-                isDownloaded = isFileExists("sd15_mnn_int8.bundle", 860000000L),
-                downloadUrl = "",
-                localFileName = "sd15_mnn_int8.bundle",
-                description = "Model Stable Diffusion 1.5 dioptimalkan untuk GPU ponsel menggunakan runtime MNN INT8.",
-                isResumable = isTempFileExists("sd15_mnn_int8.bundle")
+                sizeBytes = 1200000000L,
+                isDownloaded = isFileExists("anythingv5cpu"),
+                downloadUrl = "https://huggingface.co/xororz/sd-mnn/resolve/main/AnythingV5.zip",
+                localFileName = "anythingv5cpu.zip",
+                description = "Model Anything V5.0 dioptimalkan untuk CPU/GPU ponsel menggunakan runtime MNN.",
+                isResumable = isTempFileExists("anythingv5cpu.zip")
             ),
             LocalModelFile(
-                id = "sdxl-turbo-qnn-mobile",
-                name = "SDXL Turbo Mobile LCM (Snapdragon)",
+                id = "qteamixcpu",
+                name = "QteaMix (Chibi CPU/GPU)",
                 type = LocalModelFile.ModelType.STABLE_DIFFUSION,
-                sizeBytes = 1650000000L,
-                isDownloaded = isFileExists("sdxl_turbo_qnn.bundle", 1650000000L),
-                downloadUrl = "",
-                localFileName = "sdxl_turbo_qnn.bundle",
-                description = "Model SDXL Turbo cepat dioptimalkan untuk Qualcomm NPU Snapdragon.",
-                isResumable = isTempFileExists("sdxl_turbo_qnn.bundle")
+                sizeBytes = 1200000000L,
+                isDownloaded = isFileExists("qteamixcpu"),
+                downloadUrl = "https://huggingface.co/xororz/sd-mnn/resolve/main/QteaMix.zip",
+                localFileName = "qteamixcpu.zip",
+                description = "Model QteaMix dioptimalkan untuk CPU/GPU ponsel menggunakan runtime MNN.",
+                isResumable = isTempFileExists("qteamixcpu.zip")
             ),
             LocalModelFile(
-                id = "animagine-xl-mini",
-                name = "Animagine XL Mini (Anime)",
+                id = "absoluterealitycpu",
+                name = "Absolute Reality (Photo CPU/GPU)",
                 type = LocalModelFile.ModelType.STABLE_DIFFUSION,
-                sizeBytes = 1450000000L,
-                isDownloaded = isFileExists("animagine_xl_mini.bundle", 1450000000L),
-                downloadUrl = "",
-                localFileName = "animagine_xl_mini.bundle",
-                description = "Model visual anime/manga offline berkualitas tinggi untuk ilustrasi kreatif Anda.",
-                isResumable = isTempFileExists("animagine_xl_mini.bundle")
+                sizeBytes = 1200000000L,
+                isDownloaded = isFileExists("absoluterealitycpu"),
+                downloadUrl = "https://huggingface.co/xororz/sd-mnn/resolve/main/AbsoluteReality.zip",
+                localFileName = "absoluterealitycpu.zip",
+                description = "Model Absolute Reality dioptimalkan untuk CPU/GPU ponsel menggunakan runtime MNN.",
+                isResumable = isTempFileExists("absoluterealitycpu.zip")
             ),
             LocalModelFile(
-                id = "sd-v1.5-highres",
-                name = "Stable Diffusion v1.5 High-Res",
+                id = "chilloutmixcpu",
+                name = "ChilloutMix (Realistic CPU/GPU)",
                 type = LocalModelFile.ModelType.STABLE_DIFFUSION,
-                sizeBytes = 1950000000L,
-                isDownloaded = isFileExists("sd_v1.5_highres.bundle", 1950000000L),
-                downloadUrl = "",
-                localFileName = "sd_v1.5_highres.bundle",
-                description = "Model gambar presisi tinggi dengan detail tajam untuk diagram sains.",
-                isResumable = isTempFileExists("sd_v1.5_highres.bundle")
+                sizeBytes = 1200000000L,
+                isDownloaded = isFileExists("chilloutmixcpu"),
+                downloadUrl = "https://huggingface.co/xororz/sd-mnn/resolve/main/ChilloutMix.zip",
+                localFileName = "chilloutmixcpu.zip",
+                description = "Model ChilloutMix dioptimalkan untuk CPU/GPU ponsel menggunakan runtime MNN.",
+                isResumable = isTempFileExists("chilloutmixcpu.zip")
             ),
             LocalModelFile(
                 id = "stable-diffusion-1.5-onnx-int8",
@@ -346,6 +346,9 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
     private fun isFileExists(fileName: String, expectedSize: Long = 0L): Boolean {
         val file = File(File(getApplication<Application>().filesDir, "models"), fileName)
         if (!file.exists()) return false
+        if (file.isDirectory) {
+            return (file.list()?.isNotEmpty() == true)
+        }
         if (expectedSize > 0L) {
             // Check if file size is at least 95% of expected size to verify completeness
             return file.length() >= (expectedSize * 0.95).toLong()
@@ -403,9 +406,16 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
     fun deleteModel(modelId: String) {
         viewModelScope.launch {
             val model = _availableModels.value.find { it.id == modelId } ?: return@launch
-            val file = File(File(getApplication<Application>().filesDir, "models"), model.localFileName)
-            if (file.exists()) file.delete()
-            val tempFile = File(File(getApplication<Application>().filesDir, "models"), "${model.localFileName}.download")
+            val modelsDir = File(getApplication<Application>().filesDir, "models")
+            val file = File(modelsDir, model.localFileName)
+            if (file.exists()) {
+                if (file.isDirectory) file.deleteRecursively() else file.delete()
+            }
+            val dir = File(modelsDir, modelId)
+            if (dir.exists()) {
+                dir.deleteRecursively()
+            }
+            val tempFile = File(modelsDir, "${model.localFileName}.download")
             if (tempFile.exists()) tempFile.delete()
             
             // Remove custom model metadata from SharedPreferences if it exists

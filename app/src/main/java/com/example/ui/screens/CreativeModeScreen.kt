@@ -71,11 +71,13 @@ fun CreativeModeScreen(
     val diffusionStatus by viewModel.diffusionStatus.collectAsState()
     val availableModels by viewModel.availableModels.collectAsState()
     val activeBackend by viewModel.activeBackend.collectAsState()
+    val downloadingModelIds by viewModel.downloadingModelIds.collectAsState()
+    val modelDownloadProgress by viewModel.modelDownloadProgress.collectAsState()
 
     // Local UI form states
     var positivePrompt by remember { mutableStateOf("") }
     var negativePrompt by remember { mutableStateOf("blurry, low quality, pixelated, distorted, bad proportions") }
-    var selectedModelId by remember { mutableStateOf("stable-diffusion-1.5-mnn-int8") }
+    var selectedModelId by remember { mutableStateOf("anythingv5cpu") }
     var selectedLora by remember { mutableStateOf("None") }
     var selectedAspectRatio by remember { mutableStateOf("1:1 (Square)") }
     var inferenceSteps by remember { mutableStateOf(20f) }
@@ -363,27 +365,95 @@ fun CreativeModeScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(
                                         horizontalArrangement = Arrangement.SpaceBetween,
-                                        modifier = Modifier.fillMaxWidth()
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
                                             text = model.name,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 12.sp,
-                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.weight(1f, fill = false)
                                         )
-                                        Text(
-                                            text = model.displaySize,
-                                            fontSize = 10.sp,
-                                            color = Color.Gray,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        
+                                        if (model.isDownloaded) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .background(Color(0xFFE8F5E9), RoundedCornerShape(6.dp))
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Check,
+                                                        contentDescription = "Siap",
+                                                        tint = Color(0xFF2E7D32),
+                                                        modifier = Modifier.size(10.dp)
+                                                    )
+                                                    Text(
+                                                        text = "Siap Pakai",
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF2E7D32)
+                                                    )
+                                                }
+                                            }
+                                        } else {
+                                            val isDownloading = downloadingModelIds.contains(model.id)
+                                            val progress = modelDownloadProgress[model.id] ?: 0f
+                                            val badgeBg = if (isDownloading) Color(0xFFE3F2FD) else Color(0xFFFFF3E0)
+                                            val badgeTextCol = if (isDownloading) Color(0xFF1976D2) else Color(0xFFE65100)
+                                            val badgeText = if (isDownloading) "${(progress * 100).toInt()}%" else "Unduh"
+                                            
+                                            Box(
+                                                modifier = Modifier
+                                                    .background(badgeBg, RoundedCornerShape(6.dp))
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = if (isDownloading) Icons.Default.CloudDownload else Icons.Default.Info,
+                                                        contentDescription = badgeText,
+                                                        tint = badgeTextCol,
+                                                        modifier = Modifier.size(10.dp)
+                                                    )
+                                                    Text(
+                                                        text = badgeText,
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = badgeTextCol
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
+                                    Spacer(modifier = Modifier.height(2.dp))
                                     Text(
-                                        text = model.description,
+                                        text = "${model.description} (${model.displaySize})",
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                                         lineHeight = 14.sp
                                     )
+                                    if (downloadingModelIds.contains(model.id)) {
+                                        val progress = modelDownloadProgress[model.id] ?: 0f
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        LinearProgressIndicator(
+                                            progress = { progress },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(4.dp)
+                                                .clip(RoundedCornerShape(2.dp)),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -864,49 +934,105 @@ fun CreativeModeScreen(
             }
 
             // PRIMARY GENERATE TRIGGER BUTTON
-            val isButtonEnabled = positivePrompt.isNotBlank() && !isDiffusing
-            Button(
-                onClick = {
-                    val parsedSeed = if (isRandomSeed) -1L else customSeedInput.toLongOrNull() ?: 1337L
-                    viewModel.generateDiffusionSketchDetailed(
-                        prompt = positivePrompt,
-                        negativePrompt = negativePrompt,
-                        modelId = selectedModelId,
-                        loraModel = selectedLora,
-                        aspectRatio = selectedAspectRatio,
-                        cfgScale = cfgScale,
-                        steps = inferenceSteps.toInt(),
-                        seed = parsedSeed
-                    )
-                },
-                enabled = isButtonEnabled,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .testTag("sd_generate_detailed_btn"),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                ),
-                elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp, pressedElevation = 1.dp)
+            val selectedModel = sdModels.find { it.id == selectedModelId }
+            val isSelectedModelDownloaded = selectedModel?.isDownloaded == true
+            val isSelectedModelDownloading = downloadingModelIds.contains(selectedModelId)
+            val selectedModelProgress = modelDownloadProgress[selectedModelId] ?: 0f
+
+            val isButtonEnabled = when {
+                isDiffusing -> false
+                !isSelectedModelDownloaded -> !isSelectedModelDownloading
+                positivePrompt.isBlank() -> false
+                else -> true
+            }
+
+            val buttonText = when {
+                isDiffusing -> "Mengevaluasi Model Lokal..."
+                !isSelectedModelDownloaded -> {
+                    if (isSelectedModelDownloading) {
+                        "Mengunduh Model... (${(selectedModelProgress * 100).toInt()}%)"
+                    } else {
+                        "Unduh Model (${selectedModel?.displaySize ?: ""})"
+                    }
+                }
+                else -> "Lukis Sketsa Sekarang"
+            }
+
+            val buttonIcon = when {
+                !isSelectedModelDownloaded -> Icons.Default.CloudDownload
+                else -> Icons.Default.AutoAwesome
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
+                Button(
+                    onClick = {
+                        if (!isSelectedModelDownloaded) {
+                            if (!isSelectedModelDownloading) {
+                                viewModel.downloadModel(selectedModelId)
+                            }
+                        } else {
+                            val parsedSeed = if (isRandomSeed) -1L else customSeedInput.toLongOrNull() ?: 1337L
+                            viewModel.generateDiffusionSketchDetailed(
+                                prompt = positivePrompt,
+                                negativePrompt = negativePrompt,
+                                modelId = selectedModelId,
+                                loraModel = selectedLora,
+                                aspectRatio = selectedAspectRatio,
+                                cfgScale = cfgScale,
+                                steps = inferenceSteps.toInt(),
+                                seed = parsedSeed
+                            )
+                        }
+                    },
+                    enabled = isButtonEnabled,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(56.dp)
+                        .testTag("sd_generate_detailed_btn"),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp, pressedElevation = 1.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.AutoAwesome,
-                        contentDescription = "Lukis",
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = if (isDiffusing) "Mengevaluasi Model Lokal..." else "Lukis Sketsa Sekarang",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
-                    )
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = buttonIcon,
+                            contentDescription = buttonText,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = buttonText,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                    }
+                }
+
+                if (isSelectedModelDownloading) {
+                    IconButton(
+                        onClick = { viewModel.cancelDownload(selectedModelId) },
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Batal Unduh",
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             }
 
