@@ -20,8 +20,8 @@ enum class GpuAccelerationBackend(
     ),
     VULKAN(
         id = "vulkan",
-        displayName = "MNN Vulkan / OpenCL GPU",
-        description = "Menjalankan operator tensor model difusi melalui delegate GPU MNN untuk perangkat yang mendukung Vulkan atau OpenCL.",
+        displayName = "MNN CPU (NEON)",
+        description = "Menjalankan sd15cpu tanpa OpenCL — stabil di semua perangkat, lebih lambat dari GPU tetapi hemat memori.",
         speedText = "SD 1.5: ~1.1s/step • SDXL Turbo: cepat",
         speedMultiplier = 0.5f,
         technicalName = "MNN Vulkan/OpenCL Backend",
@@ -29,8 +29,8 @@ enum class GpuAccelerationBackend(
     ),
     OPENCL(
         id = "opencl",
-        displayName = "MNN OpenCL / OpenGL",
-        description = "Memetakan instruksi tensor ke kernel OpenCL atau OpenGL ES sebagai alternatif jika driver Vulkan tidak stabil.",
+        displayName = "MNN OpenCL GPU (Rekomendasi Mobile)",
+        description = "Akselerasi GPU melalui OpenCL MNN — pilihan terbaik untuk model sd-mnn di ponsel RAM 8GB+. Aktifkan use_opencl pada backend native.",
         speedText = "SD 1.5: ~2.2s/step",
         speedMultiplier = 1.2f,
         technicalName = "MNN OpenCL/OpenGL Backend",

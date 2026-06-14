@@ -10,16 +10,18 @@ import com.example.data.model.ChatSession
 import com.example.data.model.Converters
 import com.example.data.model.DocumentChunk
 import com.example.data.model.StudyDocument
+import com.example.data.model.GenerationHistory
 
 @Database(
-    entities = [ChatMessage::class, ChatSession::class, StudyDocument::class, DocumentChunk::class],
-    version = 2,
+    entities = [ChatMessage::class, ChatSession::class, StudyDocument::class, DocumentChunk::class, GenerationHistory::class],
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
     abstract fun documentDao(): DocumentDao
+    abstract fun generationHistoryDao(): GenerationHistoryDao
 
     companion object {
         @Volatile

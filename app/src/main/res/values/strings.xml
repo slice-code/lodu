@@ -1,3 +1,37 @@
 <resources>
     <string name="app_name">Lodu</string>
+    <string name="sd_backend_notify_title">Stable Diffusion</string>
+    <string name="sd_backend_notify">Backend SD berjalan</string>
+    <string name="sd_backend_channel">Backend Stable Diffusion</string>
+    <string name="sd_backend_channel_desc">Layanan backend untuk generate gambar lokal</string>
+    <string name="loading_sd_model">Memuat model…</string>
+    <string name="sd_generating_notify">Membuat gambar…</string>
+    <string name="sd_generation_channel">Generasi Stable Diffusion</string>
+    <string name="sd_generation_channel_desc">Notifikasi saat generate gambar lokal</string>
+    <string name="sd_unknown_error">Kesalahan tidak diketahui</string>
+    <string name="sd_error_request_failed">Permintaan gagal (%1$s)</string>
+    <string name="sd_prompt_tab">Prompt</string>
+    <string name="sd_result_tab">Hasil</string>
+    <string name="sd_history_tab">Riwayat</string>
+    <string name="sd_prompt_settings">Pengaturan prompt</string>
+    <string name="sd_advanced_settings">Lanjutan</string>
+    <string name="sd_advanced_settings_title">Pengaturan lanjutan</string>
+    <string name="sd_loading_model">Memuat model…</string>
+    <string name="sd_generate_image">Buat gambar</string>
+    <string name="sd_no_results">Belum ada hasil</string>
+    <string name="sd_no_results_hint">Atur prompt di tab Prompt lalu buat gambar</string>
+    <string name="sd_go_to_generate">Ke prompt</string>
+    <string name="sd_result_title">Hasil</string>
+    <string name="sd_generating">Membuat gambar…</string>
+    <string name="sd_opencl_warning">OpenCL GPU dapat tidak stabil di beberapa perangkat. Lanjutkan?</string>
+    <string name="sd_confirm">Ya</string>
+    <string name="sd_cancel">Batal</string>
+    <string name="sd_runtime_cpu">CPU</string>
+    <string name="sd_runtime_gpu">GPU</string>
+    <string name="sd_runtime_label">Runtime</string>
+    <string name="sd_steps_label">Langkah: %1$d</string>
+    <string name="sd_image_size_label">Ukuran: %1$d × %2$d</string>
+    <string name="sd_random_seed">Seed (kosong = acak)</string>
+    <string name="sd_no_history">Belum ada riwayat</string>
+    <string name="sd_no_history_hint">Gambar yang dibuat akan muncul di sini</string>
 </resources>

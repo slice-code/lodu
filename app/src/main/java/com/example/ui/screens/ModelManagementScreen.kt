@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.example.data.model.GpuAccelerationBackend
+import com.example.data.model.SdMobileDefaults
 import com.example.data.model.LocalModelFile
 import com.example.ui.viewmodel.EduLocalViewModel
 
@@ -254,6 +255,15 @@ fun ModelManagementScreen(
             item {
                 var isExpanded by remember { mutableStateOf(false) }
                 val activeBackend by viewModel.activeBackend.collectAsState()
+                val isSdBackendAuto by viewModel.isSdBackendAuto.collectAsState()
+                val sdBackendAutoReason by viewModel.sdBackendAutoReason.collectAsState()
+                val openClSupportInfo by viewModel.openClSupportInfo.collectAsState()
+                val openClAvailable = openClSupportInfo?.isSupported == true
+                val mnnBackendOptions = listOf(
+                    GpuAccelerationBackend.CPU,
+                    GpuAccelerationBackend.OPENCL,
+                    GpuAccelerationBackend.QNN_NPU
+                )
 
                 Card(
                     colors = CardDefaults.cardColors(
@@ -312,6 +322,11 @@ fun ModelManagementScreen(
                                     val isCpu = activeBackend == GpuAccelerationBackend.CPU
                                     val activeBgColor = if (isCpu) Color(0xFFECEFF1) else Color(0xFFE0F2F1)
                                     val activeTextColor = if (isCpu) Color(0xFF455A64) else Color(0xFF00796B)
+                                    val activeLabel = if (isSdBackendAuto) {
+                                        "Otomatis → ${activeBackend.displayName.substringBefore(" (")}"
+                                    } else {
+                                        activeBackend.displayName.substringBefore(" (")
+                                    }
                                     
                                     Box(
                                         modifier = Modifier
@@ -319,7 +334,7 @@ fun ModelManagementScreen(
                                             .padding(horizontal = 6.dp, vertical = 2.dp)
                                     ) {
                                         Text(
-                                            text = activeBackend.displayName.substringBefore(" ("),
+                                            text = activeLabel,
                                             fontSize = 9.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = activeTextColor
@@ -339,6 +354,32 @@ fun ModelManagementScreen(
                             }
                         }
                         
+                        if (openClSupportInfo != null) {
+                            Text(
+                                text = if (openClAvailable) {
+                                    "OpenCL: ${openClSupportInfo!!.reason}"
+                                } else {
+                                    "OpenCL tidak tersedia — ${openClSupportInfo!!.reason}"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (openClAvailable) {
+                                    Color(0xFF2E7D32)
+                                } else {
+                                    MaterialTheme.colorScheme.error
+                                },
+                                lineHeight = 14.sp
+                            )
+                        }
+
+                        if (isSdBackendAuto && sdBackendAutoReason.isNotBlank()) {
+                            Text(
+                                text = "Deteksi: $sdBackendAutoReason",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                lineHeight = 14.sp
+                            )
+                        }
+
                         // Active Backend Details summary
                         Column(
                             modifier = Modifier
@@ -413,20 +454,89 @@ fun ModelManagementScreen(
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
                             )
+                            Text(
+                                text = "Mode otomatis memilih CPU atau OpenCL berdasarkan RAM dan GPU perangkat.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                lineHeight = 14.sp
+                            )
                             
                             Column(
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                GpuAccelerationBackend.values().forEach { backend ->
-                                    val isSelected = backend == activeBackend
+                                val isAutoSelected = isSdBackendAuto
+                                Card(
+                                    onClick = { viewModel.setSdBackendAuto() },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isAutoSelected)
+                                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                                        else
+                                            MaterialTheme.colorScheme.surface.copy(alpha = 0.4f)
+                                    ),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        width = 1.dp,
+                                        color = if (isAutoSelected)
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                        else
+                                            MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        RadioButton(
+                                            selected = isAutoSelected,
+                                            onClick = { viewModel.setSdBackendAuto() }
+                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Otomatis (CPU / OpenCL)",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isAutoSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = "Rekomendasi — deteksi GPU & RAM perangkat",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                lineHeight = 14.sp
+                                            )
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .background(Color(0xFFE8F5E9), RoundedCornerShape(4.dp))
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "DEFAULT",
+                                                fontSize = 8.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF2E7D32)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                mnnBackendOptions.forEach { backend ->
+                                    val isOpenClOption = backend == GpuAccelerationBackend.OPENCL
+                                    val isDisabled = isOpenClOption && !openClAvailable
+                                    val isSelected = !isSdBackendAuto && backend == activeBackend
                                     Card(
-                                        onClick = { viewModel.setAccelerationBackend(backend) },
+                                        onClick = {
+                                            if (!isDisabled) viewModel.setAccelerationBackend(backend)
+                                        },
                                         colors = CardDefaults.cardColors(
                                             containerColor = if (isSelected) 
                                                 MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
                                             else 
-                                                MaterialTheme.colorScheme.surface.copy(alpha = 0.4f)
+                                                MaterialTheme.colorScheme.surface.copy(alpha = 0.4f),
+                                            disabledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.25f)
                                         ),
+                                        enabled = !isDisabled,
                                         shape = RoundedCornerShape(12.dp),
                                         border = androidx.compose.foundation.BorderStroke(
                                             width = 1.dp,
@@ -444,7 +554,10 @@ fun ModelManagementScreen(
                                         ) {
                                             RadioButton(
                                                 selected = isSelected,
-                                                onClick = { viewModel.setAccelerationBackend(backend) },
+                                                onClick = {
+                                                    if (!isDisabled) viewModel.setAccelerationBackend(backend)
+                                                },
+                                                enabled = !isDisabled,
                                                 colors = RadioButtonDefaults.colors(
                                                     selectedColor = MaterialTheme.colorScheme.primary
                                                 )
@@ -460,7 +573,7 @@ fun ModelManagementScreen(
                                                         fontWeight = FontWeight.Bold,
                                                         color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                                     )
-                                                    if (backend.id == "vulkan" || backend.id == "qnn") {
+                                                    if (backend.id == "opencl" && openClAvailable) {
                                                         Box(
                                                             modifier = Modifier
                                                                 .background(Color(0xFFE3F2FD), RoundedCornerShape(4.dp))
@@ -471,6 +584,23 @@ fun ModelManagementScreen(
                                                                 fontSize = 8.sp,
                                                                 fontWeight = FontWeight.Bold,
                                                                 color = Color(0xFF1976D2)
+                                                            )
+                                                        }
+                                                    }
+                                                    if (isDisabled) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .background(
+                                                                    MaterialTheme.colorScheme.errorContainer,
+                                                                    RoundedCornerShape(4.dp)
+                                                                )
+                                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = "TIDAK TERSEDIA",
+                                                                fontSize = 8.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = MaterialTheme.colorScheme.error
                                                             )
                                                         }
                                                     }

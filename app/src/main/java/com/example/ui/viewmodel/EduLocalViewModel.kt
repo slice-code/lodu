@@ -6,6 +6,8 @@ import android.os.Build
 import com.example.service.ModelDownloadService
 import com.example.service.ModelDownloadManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Log
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -18,10 +20,21 @@ import com.example.data.model.LocalModelFile
 import com.example.data.model.MessageSender
 import com.example.data.model.MessageType
 import com.example.data.model.StudyDocument
+import com.example.data.model.GenerationHistory
+import com.example.data.model.OpenClSupportInfo
+import com.example.data.model.SdGenerationSettings
+import com.example.data.model.OpenClCapability
+import com.example.data.model.SdModelRepository
+import com.example.data.model.SdMobileDefaults
 import com.example.data.repository.EduLocalRepository
 import com.example.service.LocalLLMEngine
 import com.example.service.LocalRAGPipeline
+import com.example.service.BackendService
 import com.example.service.LocalStableDiffusionEngine
+import com.example.service.SdBackgroundGenerationService
+import com.example.service.SdDreamBridge
+import com.example.service.SdRuntimeStatus
+import com.example.service.checkSdBackendHealth
 import com.example.service.LocalVisionEngine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,8 +42,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URL
@@ -38,6 +56,23 @@ import java.util.UUID
 import com.example.data.model.ChatSession
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.random.Random
+
+data class LastGenerationInfo(
+    val prompt: String,
+    val negativePrompt: String,
+    val modelId: String,
+    val loraModel: String,
+    val aspectRatio: String,
+    val customWidth: Int,
+    val customHeight: Int,
+    val cfgScale: Float,
+    val steps: Int,
+    val seed: Long,
+    val usedNativeInference: Boolean,
+    val backendName: String,
+    val fallbackReason: String? = null
+)
 
 class EduLocalViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -94,6 +129,32 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
     private val _diffusionStatus = MutableStateFlow("Ready")
     val diffusionStatus: StateFlow<String> = _diffusionStatus.asStateFlow()
 
+    private val _lastGenerationInfo = MutableStateFlow<LastGenerationInfo?>(null)
+    val lastGenerationInfo: StateFlow<LastGenerationInfo?> = _lastGenerationInfo.asStateFlow()
+
+    private val _sdRuntimeStatus = MutableStateFlow<SdRuntimeStatus?>(null)
+    val sdRuntimeStatus: StateFlow<SdRuntimeStatus?> = _sdRuntimeStatus.asStateFlow()
+
+    private val _isSdModelLoading = MutableStateFlow(false)
+    val isSdModelLoading: StateFlow<Boolean> = _isSdModelLoading.asStateFlow()
+
+    private val _isSdModelLoaded = MutableStateFlow(false)
+    val isSdModelLoaded: StateFlow<Boolean> = _isSdModelLoaded.asStateFlow()
+
+    private val _isCheckingSdBackend = MutableStateFlow(false)
+    val isCheckingSdBackend: StateFlow<Boolean> = _isCheckingSdBackend.asStateFlow()
+
+    val sdBackendState: StateFlow<BackendService.BackendState> = BackendService.backendState
+
+    private val _sdLoadStatus = MutableStateFlow("")
+    val sdLoadStatus: StateFlow<String> = _sdLoadStatus.asStateFlow()
+
+    private val sdPrefs = application.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+
+    // Stable Diffusion History flow
+    val generationHistory: StateFlow<List<GenerationHistory>> = database.generationHistoryDao().getAllHistory()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     // Model Management downloads states
     private val _availableModels = MutableStateFlow<List<LocalModelFile>>(emptyList())
     val availableModels: StateFlow<List<LocalModelFile>> = _availableModels.asStateFlow()
@@ -117,11 +178,362 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
     val savedSketches: StateFlow<List<File>> = _savedSketches.asStateFlow()
 
     // Active local GPU / hardware acceleration backend
-    private val _activeBackend = MutableStateFlow(GpuAccelerationBackend.VULKAN)
+    private val _sdBackendAutoReason = MutableStateFlow("")
+    val sdBackendAutoReason: StateFlow<String> = _sdBackendAutoReason.asStateFlow()
+
+    private val _openClSupportInfo = MutableStateFlow<OpenClSupportInfo?>(null)
+    val openClSupportInfo: StateFlow<OpenClSupportInfo?> = _openClSupportInfo.asStateFlow()
+
+    private val _isSdBackendAuto = MutableStateFlow(isSdBackendAutoPreference())
+    val isSdBackendAuto: StateFlow<Boolean> = _isSdBackendAuto.asStateFlow()
+
+    private val _activeBackend = MutableStateFlow(loadSavedBackend())
     val activeBackend: StateFlow<GpuAccelerationBackend> = _activeBackend.asStateFlow()
 
+    private fun isSdBackendAutoPreference(): Boolean {
+        return SdMobileDefaults.isAutoBackendPreference(
+            sdPrefs.getString("acceleration_backend", SdMobileDefaults.BACKEND_AUTO)
+        )
+    }
+
+    private fun loadSavedBackend(): GpuAccelerationBackend {
+        val savedId = sdPrefs.getString("acceleration_backend", SdMobileDefaults.BACKEND_AUTO)
+        val app = getApplication<Application>()
+        val resolved = SdMobileDefaults.resolveMnnBackend(app, savedId)
+        _sdBackendAutoReason.value = if (SdMobileDefaults.isAutoBackendPreference(savedId)) {
+            SdMobileDefaults.describeAutoBackendChoice(app, resolved)
+        } else {
+            ""
+        }
+        _openClSupportInfo.value = SdMobileDefaults.getOpenClSupportInfo(app)
+        return resolved
+    }
+
+    fun refreshOpenClProbe() {
+        OpenClCapability.clearCache()
+        _openClSupportInfo.value = SdMobileDefaults.getOpenClSupportInfo(getApplication())
+    }
+
+    /** Terapkan deteksi otomatis CPU/OpenCL sebelum load SD (jika mode auto). */
+    private fun resolveAndApplySdBackend(reloadIfChanged: Boolean = false): GpuAccelerationBackend {
+        val app = getApplication<Application>()
+        val savedId = sdPrefs.getString("acceleration_backend", SdMobileDefaults.BACKEND_AUTO)
+        val auto = SdMobileDefaults.isAutoBackendPreference(savedId)
+        _isSdBackendAuto.value = auto
+
+        val resolved = SdMobileDefaults.resolveMnnBackend(app, savedId)
+        _sdBackendAutoReason.value = if (auto) {
+            SdMobileDefaults.describeAutoBackendChoice(app, resolved)
+        } else {
+            ""
+        }
+        _openClSupportInfo.value = SdMobileDefaults.getOpenClSupportInfo(app)
+
+        val changed = _activeBackend.value != resolved
+        if (changed) {
+            _activeBackend.value = resolved
+            if (reloadIfChanged) {
+                clearSdSessionPrepared()
+                _isSdModelLoaded.value = false
+            }
+        }
+        return resolved
+    }
+
+    fun setSdBackendAuto() {
+        sdPrefs.edit().putString("acceleration_backend", SdMobileDefaults.BACKEND_AUTO).apply()
+        _isSdBackendAuto.value = true
+        val resolved = resolveAndApplySdBackend(reloadIfChanged = false)
+        _sdLoadStatus.value = "Mode otomatis: ${resolved.displayName.substringBefore(" (")}"
+    }
+
+    private val _sdGenerationSettings = MutableStateFlow(loadSdGenerationSettings())
+    val sdGenerationSettings: StateFlow<SdGenerationSettings> = _sdGenerationSettings.asStateFlow()
+
+    private fun loadSdGenerationSettings(): SdGenerationSettings {
+        val profileName = sdPrefs.getString("sd_profile", SdMobileDefaults.PerformanceProfile.BALANCED.name)
+        val profile = SdMobileDefaults.PerformanceProfile.entries.find { it.name == profileName }
+            ?: SdMobileDefaults.recommendedProfileForDevice(getApplication())
+        return SdGenerationSettings(
+            steps = sdPrefs.getFloat("sd_steps", profile.steps.toFloat()),
+            cfgScale = sdPrefs.getFloat("sd_cfg", profile.cfg),
+            customWidth = sdPrefs.getFloat("sd_width", profile.width.toFloat()),
+            customHeight = sdPrefs.getFloat("sd_height", profile.height.toFloat()),
+            aspectRatio = sdPrefs.getString("sd_aspect_ratio", SdMobileDefaults.DEFAULT_ASPECT_RATIO)
+                ?: SdMobileDefaults.DEFAULT_ASPECT_RATIO,
+            performanceProfile = profile
+        )
+    }
+
+    fun saveSdGenerationSettings(settings: SdGenerationSettings) {
+        _sdGenerationSettings.value = settings
+        sdPrefs.edit()
+            .putFloat("sd_steps", settings.steps)
+            .putFloat("sd_cfg", settings.cfgScale)
+            .putFloat("sd_width", settings.customWidth)
+            .putFloat("sd_height", settings.customHeight)
+            .putString("sd_aspect_ratio", settings.aspectRatio)
+            .putString("sd_profile", settings.performanceProfile.name)
+            .apply()
+    }
+
+    fun applySdPerformanceProfile(profile: SdMobileDefaults.PerformanceProfile) {
+        val preset = SdMobileDefaults.aspectPresets.first()
+        saveSdGenerationSettings(
+            SdGenerationSettings(
+                steps = profile.steps.toFloat(),
+                cfgScale = profile.cfg,
+                customWidth = profile.width.toFloat(),
+                customHeight = profile.height.toFloat(),
+                aspectRatio = preset.label,
+                performanceProfile = profile
+            )
+        )
+    }
+
     fun setAccelerationBackend(backend: GpuAccelerationBackend) {
-        _activeBackend.value = backend
+        if (!isSdBackendAutoPreference() && _activeBackend.value == backend) return
+        sdPrefs.edit().putString("acceleration_backend", backend.id).apply()
+        _isSdBackendAuto.value = false
+        _sdBackendAutoReason.value = ""
+        _activeBackend.value = SdMobileDefaults.resolveMnnBackend(getApplication(), backend.id)
+    }
+
+    fun refreshSdRuntimeStatus(modelId: String) {
+        _sdRuntimeStatus.value = stableDiffusionEngine.inspectRuntimeStatus(modelId)
+    }
+
+    private fun validateSelectedSdRuntime(modelId: String): Boolean {
+        val status = stableDiffusionEngine.inspectRuntimeStatus(modelId)
+        _sdRuntimeStatus.value = status
+        if (!status.nativeCoreAvailable) {
+            _isSdModelLoaded.value = false
+            _sdLoadStatus.value = "Native runtime Stable Diffusion tidak tersedia"
+            return false
+        }
+        if (!status.modelReady) {
+            _isSdModelLoaded.value = false
+            _sdLoadStatus.value = "Model belum lengkap: ${status.missingModelFiles.joinToString(", ")}"
+            return false
+        }
+        return true
+    }
+
+    private val _selectedSdModelId = MutableStateFlow(loadSavedSdModelId())
+    val selectedSdModelId: StateFlow<String> = _selectedSdModelId.asStateFlow()
+
+    private fun loadSavedSdModelId(): String {
+        val saved = sdPrefs.getString("selected_sd_model", "anythingv5cpu") ?: "anythingv5cpu"
+        return saved.takeIf { isSupportedSdModelId(it) } ?: "anythingv5cpu"
+    }
+
+    private fun isSupportedSdModelId(modelId: String): Boolean {
+        return SdModelRepository(getApplication()).findById(modelId) != null
+    }
+
+    private fun normalizeSelectedSdModel(models: List<LocalModelFile>) {
+        val supportedSdModels = models.filter {
+            it.type == LocalModelFile.ModelType.STABLE_DIFFUSION && isSupportedSdModelId(it.id)
+        }
+        val current = _selectedSdModelId.value
+        if (supportedSdModels.none { it.id == current }) {
+            val fallback = supportedSdModels.firstOrNull()?.id ?: "anythingv5cpu"
+            _selectedSdModelId.value = fallback
+            sdPrefs.edit().putString("selected_sd_model", fallback).apply()
+            clearSdSessionPrepared()
+            _isSdModelLoaded.value = false
+        }
+    }
+
+    private val sdLoadMutex = Mutex()
+    private var sdPreparedModelId: String? = null
+    private var sdPrepareJob: Job? = null
+    private var sdGenerationProgressJob: Job? = null
+
+    private fun markSdSessionPrepared(modelId: String) {
+        sdPreparedModelId = modelId
+    }
+
+    private fun clearSdSessionPrepared() {
+        sdPreparedModelId = null
+    }
+
+    fun isSdBackendSessionPrepared(): Boolean {
+        return sdPreparedModelId == _selectedSdModelId.value && SdDreamBridge.isBackendReady()
+    }
+
+    /** Fast UI sync when backend was already prepared this session (no service restart). */
+    fun syncSdBackendUiState() {
+        if (isSdBackendSessionPrepared()) {
+            _isSdModelLoaded.value = true
+            _isSdModelLoading.value = false
+            _isCheckingSdBackend.value = false
+            if (_sdLoadStatus.value.isBlank()) {
+                _sdLoadStatus.value = "Model sudah siap"
+            }
+        }
+    }
+
+    fun cleanupSdDream() {
+        sdGenerationProgressJob?.cancel()
+        SdDreamBridge.cleanup(getApplication())
+        clearSdSessionPrepared()
+        _isSdModelLoaded.value = false
+        _isSdModelLoading.value = false
+        _isCheckingSdBackend.value = false
+    }
+
+    fun selectSdModel(modelId: String) {
+        if (!isSupportedSdModelId(modelId)) return
+        val model = _availableModels.value.find {
+            it.id == modelId && it.type == LocalModelFile.ModelType.STABLE_DIFFUSION
+        } ?: return
+        val modelChanged = _selectedSdModelId.value != modelId
+        if (!modelChanged) return
+        _selectedSdModelId.value = modelId
+        sdPrefs.edit().putString("selected_sd_model", modelId).apply()
+        clearSdSessionPrepared()
+        _isSdModelLoaded.value = false
+        loadActiveSdModel(force = true)
+    }
+
+    /**
+     * Ensures the SD backend is running once per model session (local-dream ModelRunScreen pattern).
+     */
+    fun ensureSdBackendReady() {
+        resolveAndApplySdBackend(reloadIfChanged = false)
+        if (isSdBackendSessionPrepared()) {
+            syncSdBackendUiState()
+            return
+        }
+        sdPrepareJob?.cancel()
+        sdPrepareJob = viewModelScope.launch {
+            loadActiveSdModel()
+        }
+    }
+
+    private fun resolveGenerationDimensions(
+        aspectRatio: String,
+        customWidth: Int,
+        customHeight: Int
+    ): Pair<Int, Int> {
+        val settings = _sdGenerationSettings.value
+        val width = if (customWidth > 0) {
+            SdMobileDefaults.clampDimension(customWidth)
+        } else {
+            SdMobileDefaults.clampDimension(settings.customWidth.toInt())
+                .takeIf { it > 0 } ?: SdMobileDefaults.widthForAspectRatio(aspectRatio)
+        }
+        val height = if (customHeight > 0) {
+            SdMobileDefaults.clampDimension(customHeight)
+        } else {
+            SdMobileDefaults.clampDimension(settings.customHeight.toInt())
+                .takeIf { it > 0 } ?: SdMobileDefaults.heightForAspectRatio(aspectRatio)
+        }
+        return width to height
+    }
+
+    fun loadActiveSdModel(force: Boolean = false) {
+        viewModelScope.launch {
+            prepareSdBackendLocked(force)
+        }
+    }
+
+    private suspend fun prepareSdBackendLocked(force: Boolean = false) {
+        resolveAndApplySdBackend(reloadIfChanged = false)
+        sdLoadMutex.withLock {
+            val modelId = _selectedSdModelId.value
+            val model = _availableModels.value.find {
+                it.id == modelId && it.type == LocalModelFile.ModelType.STABLE_DIFFUSION
+            }
+            refreshSdRuntimeStatus(modelId)
+
+            if (model == null || !model.isDownloaded) {
+                _isSdModelLoaded.value = false
+                _sdLoadStatus.value = if (model != null) {
+                    "Model belum diunduh"
+                } else {
+                    "Model tidak ditemukan"
+                }
+                return@withLock
+            }
+
+            if (!validateSelectedSdRuntime(modelId)) {
+                return@withLock
+            }
+
+            val (width, height) = resolveGenerationDimensions(
+                _sdGenerationSettings.value.aspectRatio,
+                _sdGenerationSettings.value.customWidth.toInt(),
+                _sdGenerationSettings.value.customHeight.toInt()
+            )
+
+            if (!force && isSdBackendSessionPrepared()) {
+                _isSdModelLoaded.value = true
+                _sdLoadStatus.value = "Model sudah siap"
+                return@withLock
+            }
+
+            if (force) {
+                SdDreamBridge.stopBackend(getApplication())
+                clearSdSessionPrepared()
+                _isSdModelLoaded.value = false
+            }
+
+            if (_isSdModelLoading.value || _isCheckingSdBackend.value) {
+                // Mutex serializes concurrent prepare calls.
+            }
+
+            val backendRunning = BackendService.backendState.value is BackendService.BackendState.Running
+            val sameModel = sdPreparedModelId == modelId
+
+            if (backendRunning && sameModel && !force) {
+                _isCheckingSdBackend.value = true
+                _sdLoadStatus.value = "Menghubungkan ke backend..."
+            } else {
+                if (backendRunning) {
+                    SdDreamBridge.stopBackend(getApplication())
+                }
+                _isSdModelLoading.value = true
+                _sdLoadStatus.value = "Memuat model ${model.name}..."
+                SdDreamBridge.startBackend(getApplication(), modelId, width, height)
+            }
+
+            var healthy = false
+            var unhealthy = false
+            checkSdBackendHealth(
+                BackendService.backendState,
+                onHealthy = { healthy = true },
+                onUnhealthy = { unhealthy = true }
+            )
+
+            _isSdModelLoading.value = false
+            _isCheckingSdBackend.value = false
+
+            if (healthy) {
+                _isSdModelLoaded.value = true
+                _sdLoadStatus.value = "Model siap — backend native berjalan"
+                markSdSessionPrepared(modelId)
+            } else {
+                _isSdModelLoaded.value = false
+                val backendErr = BackendService.backendState.value
+                _sdLoadStatus.value = when {
+                    backendErr is BackendService.BackendState.Error -> backendErr.message
+                    unhealthy -> "Backend tidak merespons — coba lagi"
+                    else -> "Gagal memulai backend native Stable Diffusion"
+                }
+            }
+            refreshSdRuntimeStatus(modelId)
+        }
+    }
+
+    fun unloadSdModel() {
+        SdDreamBridge.stopBackend(getApplication())
+        clearSdSessionPrepared()
+        _isSdModelLoaded.value = false
+        _isSdModelLoading.value = false
+        _isCheckingSdBackend.value = false
+        _sdLoadStatus.value = "Model tidak aktif"
     }
 
     private val _selectedLlmModelId = MutableStateFlow("qwen-2.5-0.5b-it-q8")
@@ -155,10 +567,18 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
         loadModelList()
         loadSavedSketches()
         loadActiveLlmModel()
+
         viewModelScope.launch {
-            ModelDownloadManager.downloadingModelIds.collect {
+            ModelDownloadManager.downloadingModelIds.collect { downloadingIds ->
                 loadModelList()
-                loadActiveLlmModel()
+            }
+        }
+        viewModelScope.launch {
+            _availableModels.collect { models ->
+                val activeLlm = models.find { it.id == _selectedLlmModelId.value && it.type == LocalModelFile.ModelType.LLM }
+                if (activeLlm?.isDownloaded == true && !_isModelLoaded.value && !_isModelLoading.value) {
+                    loadActiveLlmModel()
+                }
             }
         }
         viewModelScope.launch {
@@ -305,17 +725,6 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
                 isResumable = isTempFileExists("chilloutmixcpu.zip")
             ),
             LocalModelFile(
-                id = "stable-diffusion-1.5-onnx-int8",
-                name = "Stable Diffusion 1.5 ONNX INT8",
-                type = LocalModelFile.ModelType.STABLE_DIFFUSION,
-                sizeBytes = 860000000L,
-                isDownloaded = isFileExists("sd15_onnx_int8.onnx", 860000000L),
-                downloadUrl = "https://huggingface.co/onnx-community/stable-diffusion-v1-5-ONNX/resolve/main/unet/model.onnx",
-                localFileName = "sd15_onnx_int8.onnx",
-                description = "Model U-Net dari Stable Diffusion 1.5, dioptimalkan menggunakan ONNX Runtime dan dikuantisasi ke INT8 (8-bit) untuk kompilasi silang CPU/GPU perangkat mobile.",
-                isResumable = isTempFileExists("sd15_onnx_int8.onnx")
-            ),
-            LocalModelFile(
                 id = "lora-detail-tweaker",
                 name = "Detail Tweaker LoRA (v1.5)",
                 type = LocalModelFile.ModelType.LORA,
@@ -338,8 +747,12 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
             )
         )
         val customModels = getCustomModels()
-        val models = hardcodedModels + customModels
+        val supportedSdIds = SdModelRepository(getApplication()).models.map { it.id }.toSet()
+        val models = (hardcodedModels + customModels).filterNot {
+            it.type == LocalModelFile.ModelType.STABLE_DIFFUSION && it.id !in supportedSdIds
+        }
         _availableModels.value = models
+        normalizeSelectedSdModel(models)
         calculateStorage(models)
     }
 
@@ -544,13 +957,18 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun sendMessage(text: String, attachedUri: Uri? = null, attachedType: MessageType? = null) {
-        if (text.isBlank()) return
+        if (text.isBlank() && attachedUri == null) return
 
         viewModelScope.launch {
             val sessionId = _activeSessionId.value ?: return@launch
+            
+            val messageText = text.ifBlank {
+                if (attachedType == MessageType.IMAGE) "[Gambar]" else "[Dokumen]"
+            }
+
             val userMsg = ChatMessage(
                 sessionId = sessionId,
-                text = text,
+                text = messageText,
                 sender = MessageSender.USER,
                 type = attachedType ?: MessageType.TEXT,
                 attachmentPath = attachedUri?.toString()
@@ -561,6 +979,22 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
             var retrievedContext: String? = null
             if (attachedType == MessageType.FILE) {
                 retrievedContext = ragPipeline.retrieveRelevantContext(text)
+            } else if (attachedType == MessageType.IMAGE && attachedUri != null) {
+                try {
+                    val contentResolver = getApplication<Application>().contentResolver
+                    contentResolver.openInputStream(attachedUri).use { inputStream ->
+                        val bitmap = BitmapFactory.decodeStream(inputStream)
+                        if (bitmap != null) {
+                            val analysis = visionEngine.analyzeImage(bitmap)
+                            retrievedContext = "[Vision Analysis Result]\n" +
+                                    "Detected Items: ${analysis.detectedItems.joinToString(", ")}\n" +
+                                    "OCR/Text in Image: ${analysis.ocrText}\n" +
+                                    "Summary: ${analysis.educationalSummary}"
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("EduLocalViewModel", "Failed to analyze image", e)
+                }
             }
 
             val assistantMsgId = UUID.randomUUID().toString()
@@ -573,7 +1007,15 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
             )
             repository.insertMessage(assistantMsg)
 
-            llmEngine.generateResponseStream(text, retrievedContext).collect { partialText ->
+            val queryText = text.ifBlank {
+                if (attachedType == MessageType.IMAGE) {
+                    "Tolong analisis gambar yang saya lampirkan."
+                } else {
+                    "Tolong bantu saya memahami dokumen yang dilampirkan ini."
+                }
+            }
+
+            llmEngine.generateResponseStream(queryText, retrievedContext).collect { partialText ->
                 if (partialText.isNotBlank()) {
                     assistantMsg = assistantMsg.copy(text = partialText)
                     repository.insertMessage(assistantMsg)
@@ -606,28 +1048,194 @@ class EduLocalViewModel(application: Application) : AndroidViewModel(application
         aspectRatio: String,
         cfgScale: Float,
         steps: Int,
-        seed: Long
+        seed: Long,
+        customWidth: Int = 0,
+        customHeight: Int = 0
     ) {
         if (prompt.isBlank()) return
-        viewModelScope.launch {
-            _diffusionProgress.value = true
-            _generatedDiagram.value = null
-            _totalDiffusionSteps.value = steps
-            _diffusionStep.value = 0
-            val actualSeed = if (seed == -1L) (1000..9999).random().toLong() else seed
 
-            for (currStep in 1..steps) {
-                _diffusionStep.value = currStep
-                _diffusionStatus.value = "Generating step $currStep..."
-                kotlinx.coroutines.delay(50)
+        val (genWidth, genHeight) = resolveGenerationDimensions(aspectRatio, customWidth, customHeight)
+        val safeSteps = steps.coerceIn(SdMobileDefaults.MIN_STEPS, SdMobileDefaults.MAX_STEPS)
+        val safeCfg = cfgScale.coerceIn(SdMobileDefaults.MIN_CFG, SdMobileDefaults.MAX_CFG)
+
+        viewModelScope.launch {
+            if (_selectedSdModelId.value != modelId) {
+                _diffusionStatus.value = "Model tidak cocok — pilih model di tab Prompt"
+                return@launch
             }
 
-            val bitmap = stableDiffusionEngine.generateDiagramDetailed(
-                prompt, negativePrompt, modelId, loraModel, aspectRatio, cfgScale, steps, actualSeed, activeBackend.value.displayName
-            )
-            _generatedDiagram.value = bitmap
-            _diffusionProgress.value = false
-            _diffusionStatus.value = "Selesai!"
+            _diffusionProgress.value = true
+            _generatedDiagram.value = null
+            _totalDiffusionSteps.value = safeSteps
+            _diffusionStep.value = 0
+            _diffusionStatus.value = "Menyiapkan backend..."
+            val actualSeed = if (seed == -1L) Random.nextLong(0, Long.MAX_VALUE) else seed
+            resolveAndApplySdBackend(reloadIfChanged = false)
+            val backend = activeBackend.value
+            refreshSdRuntimeStatus(modelId)
+
+            if (!validateSelectedSdRuntime(modelId)) {
+                _diffusionProgress.value = false
+                _diffusionStatus.value = _sdLoadStatus.value.ifBlank { "Model Stable Diffusion belum lengkap" }
+                return@launch
+            }
+
+            if (!SdDreamBridge.isBackendReady()) {
+                prepareSdBackendLocked(force = false)
+            }
+            if (!SdDreamBridge.isBackendReady()) {
+                _diffusionProgress.value = false
+                _diffusionStatus.value = _sdLoadStatus.value.ifBlank { "Backend tidak siap" }
+                return@launch
+            }
+            _isSdModelLoaded.value = true
+
+            val apiAspectRatio = when {
+                aspectRatio == "Kustom" || !aspectRatio.contains(":") -> {
+                    when {
+                        genWidth == genHeight -> "1:1"
+                        else -> "$genWidth:$genHeight"
+                    }
+                }
+                else -> aspectRatio
+            }
+
+            SdBackgroundGenerationService.resetState()
+            _diffusionStatus.value = "Mengirim request generate..."
+            sdGenerationProgressJob?.cancel()
+            sdGenerationProgressJob = launch {
+                SdBackgroundGenerationService.generationState.collect { state ->
+                    if (state is SdBackgroundGenerationService.GenerationState.Progress) {
+                        val step = (state.progress * safeSteps).toInt().coerceIn(0, safeSteps)
+                        _diffusionStep.value = step
+                        _diffusionStatus.value = "Langkah $step dari $safeSteps..."
+                        state.intermediateImage?.let { _generatedDiagram.value = it }
+                    }
+                }
+            }
+
+            val genIntent = Intent(getApplication(), SdBackgroundGenerationService::class.java).apply {
+                putExtra("prompt", prompt)
+                putExtra("negative_prompt", negativePrompt)
+                putExtra("steps", safeSteps)
+                putExtra("cfg", safeCfg)
+                putExtra("seed", actualSeed)
+                putExtra("width", genWidth)
+                putExtra("height", genHeight)
+                putExtra("effective_width", genWidth)
+                putExtra("effective_height", genHeight)
+                putExtra("use_opencl", backend == GpuAccelerationBackend.OPENCL)
+                putExtra("scheduler", "dpm")
+                putExtra("aspect_ratio", apiAspectRatio)
+            }
+            getApplication<Application>().startForegroundService(genIntent)
+
+            val finalState = withTimeoutOrNull(30 * 60 * 1000L) {
+                SdBackgroundGenerationService.generationState.first {
+                    it is SdBackgroundGenerationService.GenerationState.Complete ||
+                        it is SdBackgroundGenerationService.GenerationState.Error
+                }
+            }
+            sdGenerationProgressJob?.cancel()
+
+            if (finalState == null) {
+                _diffusionProgress.value = false
+                _diffusionStatus.value = "Generate timeout — backend tidak merespons"
+                SdDreamBridge.stopGeneration(getApplication())
+                return@launch
+            }
+
+            when (finalState) {
+                is SdBackgroundGenerationService.GenerationState.Complete -> {
+                    val bitmap = finalState.bitmap
+                    val actualWidth = bitmap.width
+                    val actualHeight = bitmap.height
+
+                    _generatedDiagram.value = bitmap
+                    _diffusionProgress.value = false
+                    _diffusionStatus.value = "Selesai! (render native)"
+                    SdBackgroundGenerationService.markBitmapConsumed()
+
+                    _lastGenerationInfo.value = LastGenerationInfo(
+                        prompt = prompt,
+                        negativePrompt = negativePrompt,
+                        modelId = modelId,
+                        loraModel = loraModel,
+                        aspectRatio = aspectRatio,
+                        customWidth = actualWidth,
+                        customHeight = actualHeight,
+                        cfgScale = safeCfg,
+                        steps = safeSteps,
+                        seed = actualSeed,
+                        usedNativeInference = true,
+                        backendName = backend.displayName,
+                        fallbackReason = null
+                    )
+
+                    try {
+                        val context = getApplication<Application>().applicationContext
+                        val historyDir = File(context.filesDir, "history_images")
+                        if (!historyDir.exists()) historyDir.mkdirs()
+                        val imageFile = File(historyDir, "sd_history_${System.currentTimeMillis()}.png")
+
+                        java.io.FileOutputStream(imageFile).use { out ->
+                            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                        }
+
+                        val historyItem = GenerationHistory(
+                            prompt = prompt,
+                            negativePrompt = negativePrompt,
+                            modelId = modelId,
+                            loraModel = loraModel,
+                            aspectRatio = aspectRatio,
+                            customWidth = actualWidth,
+                            customHeight = actualHeight,
+                            cfgScale = safeCfg,
+                            steps = safeSteps,
+                            seed = actualSeed,
+                            imagePath = imageFile.absolutePath
+                        )
+                        database.generationHistoryDao().insertHistory(historyItem)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+                is SdBackgroundGenerationService.GenerationState.Error -> {
+                    _diffusionProgress.value = false
+                    _diffusionStatus.value = finalState.message
+                }
+                else -> {
+                    _diffusionProgress.value = false
+                    _diffusionStatus.value = "Generate gagal"
+                }
+            }
+        }
+    }
+
+    fun deleteHistoryItem(item: GenerationHistory) {
+        viewModelScope.launch {
+            try {
+                val file = File(item.imagePath)
+                if (file.exists()) file.delete()
+                database.generationHistoryDao().deleteHistoryById(item.id)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun clearAllHistory() {
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>().applicationContext
+                val historyDir = File(context.filesDir, "history_images")
+                if (historyDir.exists()) {
+                    historyDir.deleteRecursively()
+                }
+                database.generationHistoryDao().deleteAllHistory()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 

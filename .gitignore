@@ -17,3 +17,7 @@ post.txt
 local.properties
 .env
 debug.keystore
+# Native SD binaries (build via scripts/build_sd_native.sh — too large to commit)
+app/src/main/jniLibs/**/*.so
+app/src/main/assets/qnnlibs/*.so
+.sd-native-build/

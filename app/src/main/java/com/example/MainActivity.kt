@@ -5,8 +5,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Book
@@ -87,21 +90,54 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 ) { innerPadding ->
-                    val contentModifier = Modifier.padding(bottom = innerPadding.calculateBottomPadding())
-                    when (currentTab) {
-                        NavigationTab.CHAT -> ChatScreen(
+                    val contentModifier = Modifier
+                        .padding(bottom = innerPadding.calculateBottomPadding())
+                        .fillMaxSize()
+
+                    fun Modifier.tabLayer(visible: Boolean): Modifier = this.then(
+                        if (visible) {
+                            Modifier.zIndex(1f)
+                        } else {
+                            Modifier
+                                .zIndex(-1f)
+                                .graphicsLayer { alpha = 0f }
+                        }
+                    )
+
+                    Box(modifier = contentModifier) {
+                        ChatScreen(
                             viewModel = viewModel,
-                            modifier = contentModifier,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .tabLayer(currentTab == NavigationTab.CHAT),
                             onNavigateToCreative = { currentTab = NavigationTab.CREATIVE }
                         )
-                        NavigationTab.CREATIVE -> CreativeModeScreen(viewModel = viewModel, modifier = contentModifier)
-                        NavigationTab.STUDY -> StudyModeScreen(viewModel = viewModel, modifier = contentModifier)
-                        NavigationTab.GALLERY -> GalleryScreen(
+                        CreativeModeScreen(
                             viewModel = viewModel,
-                            modifier = contentModifier,
+                            isActive = currentTab == NavigationTab.CREATIVE,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .tabLayer(currentTab == NavigationTab.CREATIVE)
+                        )
+                        StudyModeScreen(
+                            viewModel = viewModel,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .tabLayer(currentTab == NavigationTab.STUDY)
+                        )
+                        GalleryScreen(
+                            viewModel = viewModel,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .tabLayer(currentTab == NavigationTab.GALLERY),
                             onNavigateToChat = { currentTab = NavigationTab.CHAT }
                         )
-                        NavigationTab.MODEL -> ModelManagementScreen(viewModel = viewModel, modifier = contentModifier)
+                        ModelManagementScreen(
+                            viewModel = viewModel,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .tabLayer(currentTab == NavigationTab.MODEL)
+                        )
                     }
                 }
             }
